@@ -1,25 +1,10 @@
 # Going live: what to create, in order
 
-Do these in order. Never paste a key or password into chat; every secret goes into `.env.local` on your Mac or into Vercel's environment variables.
+Do these in order. Never paste a key or password into chat; every secret goes into Vercel's environment variables (Project → Settings → Environment Variables).
 
-## 1. GitHub (code home)
+## 1. GitHub (code home) — done
 
-Pick one.
-
-**A. GitHub CLI (easiest).** Install from https://cli.github.com, then in Terminal:
-
-```bash
-gh auth login
-```
-
-Choose GitHub.com, HTTPS, Yes, Login with a web browser. Then tell Claude "logged in" and it creates the private repo `AmmarKhan3/leadsgeeks-crm` and pushes.
-
-**B. By hand.** On github.com: New repository, name `leadsgeeks-crm`, Private, no README. Create a token at github.com/settings/tokens (classic, scope `repo`). Then in Terminal (username `AmmarKhan3`, password = the token):
-
-```bash
-git -C "/Users/syedusmanrizvi/LeadsGeeks CRM/crm" remote add origin https://github.com/AmmarKhan3/leadsgeeks-crm.git
-git -C "/Users/syedusmanrizvi/LeadsGeeks CRM/crm" push -u origin main
-```
+The code lives in the private repository `AmmarKhan3/leadsgeeks-crm`. The app itself sits in the `leadsgeeks-crm-upload` folder of that repository (remember this folder name for step 4). Changes are made and pushed from Claude cloud sessions; nothing needs to be installed on your Mac.
 
 ## 2. Supabase (database, logins, report files)
 
@@ -35,10 +20,10 @@ git -C "/Users/syedusmanrizvi/LeadsGeeks CRM/crm" push -u origin main
 
 ## 3. Encryption key for stored client logins
 
-In Terminal:
+You need 32 random bytes encoded as base64 (a string of 44 characters ending in `=`). No Terminal needed: in the Supabase SQL Editor run this and copy the single value it returns:
 
-```bash
-openssl rand -base64 32
+```sql
+select encode(gen_random_bytes(32), 'base64');
 ```
 
 Copy the output somewhere safe (password manager). This is `LOGIN_ENCRYPTION_KEY`. If it is lost, every stored client password becomes unreadable.
@@ -46,7 +31,8 @@ Copy the output somewhere safe (password manager). This is `LOGIN_ENCRYPTION_KEY
 ## 4. Vercel (hosting)
 
 1. https://vercel.com → Sign up with GitHub → Add New Project → import `leadsgeeks-crm`.
-2. Before clicking Deploy, open Environment Variables and add:
+2. On the import screen, under **Root Directory**, click Edit and choose `leadsgeeks-crm-upload`. Vercel should then detect Next.js automatically. This step is required; without it the deploy fails because the app is not at the top of the repository.
+3. Before clicking Deploy, open Environment Variables and add:
 
 | Name | Value |
 |---|---|
@@ -57,9 +43,9 @@ Copy the output somewhere safe (password manager). This is `LOGIN_ENCRYPTION_KEY
 | `NEXT_PUBLIC_APP_URL` | `https://leadsgeeks-crm.vercel.app` for now; your custom domain later |
 | `SLACK_WEBHOOK_URL` | leave empty until step 6 |
 
-3. Deploy. Copy the URL Vercel gives you.
-4. Back in Supabase → Authentication → URL Configuration: Site URL = that Vercel URL; Redirect URLs: add `https://<vercel-url>/auth/callback`.
-5. Open the Vercel URL, sign in with the email and password from step 2.4. You are the admin. Invite the team from the Team page.
+4. Deploy. Copy the URL Vercel gives you.
+5. Back in Supabase → Authentication → URL Configuration: Site URL = that Vercel URL; Redirect URLs: add `https://<vercel-url>/auth/callback`.
+6. Open the Vercel URL, sign in with the email and password from step 2.4. You are the admin. Invite the team from the Team page.
 
 ## 5. Custom domain (optional, later)
 

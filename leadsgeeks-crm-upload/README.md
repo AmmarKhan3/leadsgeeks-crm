@@ -4,9 +4,12 @@ Internal CRM for the customer success and backend teams: client accounts, access
 
 Stack: Next.js (App Router, server actions) · Supabase (Postgres with row level security, Auth, Storage) · Tailwind · Vercel.
 
+This folder (`leadsgeeks-crm-upload`) is the root of the app. Run every command from inside it, and set Vercel's **Root Directory** to `leadsgeeks-crm-upload` when importing the repository.
+
 ## Run locally
 
 ```bash
+cd leadsgeeks-crm-upload
 npm install
 cp .env.example .env.local   # fill in the Supabase keys and an encryption key
 npm run dev
@@ -14,9 +17,9 @@ npm run dev
 
 ## First-time setup
 
-1. **Supabase**: follow `supabase/README.md` (run the migration, turn off public sign-ups, invite the first admin).
+1. **Supabase**: follow `SETUP.md` section 2 (run the migration, turn off public sign-ups, invite the first admin).
 2. **Encryption key** for stored client logins: `openssl rand -base64 32` → `LOGIN_ENCRYPTION_KEY`. Keep a copy somewhere safe; without it stored passwords cannot be read.
-3. **Vercel**: import this GitHub repository, add every variable from `.env.example`, deploy. Set `NEXT_PUBLIC_APP_URL` to the deployed URL and add `<url>/auth/callback` to Supabase's redirect list.
+3. **Vercel**: import this GitHub repository with Root Directory set to `leadsgeeks-crm-upload`, add every variable from `.env.example`, deploy. Set `NEXT_PUBLIC_APP_URL` to the deployed URL and add `<url>/auth/callback` to Supabase's redirect list.
 
 ## How permissions work
 
