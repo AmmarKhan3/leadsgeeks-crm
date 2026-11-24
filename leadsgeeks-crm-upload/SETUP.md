@@ -8,15 +8,13 @@ The code lives in the private repository `AmmarKhan3/leadsgeeks-crm`. The app it
 
 ## 2. Supabase (database, logins, report files)
 
-1. https://supabase.com → New project. Name `leadsgeeks-crm`, region US East, pick a strong database password and store it in your password manager (you rarely need it again).
-2. SQL Editor → New query → paste all of `supabase/migrations/0001_init.sql` → Run.
-3. Authentication → Providers → Email: turn **off** "Allow new users to sign up".
-4. Authentication → Users → Invite user → your own email. Open the email, set a password.
-5. SQL Editor, run:
-   ```sql
-   update profiles set role = 'admin', name = 'Ammar Khan' where email = 'YOUR-EMAIL';
-   ```
-6. Project Settings → API: you will copy three values into Vercel in step 4: Project URL, `anon` key, `service_role` key.
+Already done through the Supabase connection: the project `leadsgeeks-crm` exists (US East) and both migrations in `supabase/migrations` have been applied, so every table, permission rule and the private `reports` bucket are in place. The first person who accepts an invite automatically becomes admin.
+
+Still to do in the Supabase dashboard (https://supabase.com/dashboard, project `leadsgeeks-crm`):
+
+1. Authentication → Sign In / Providers → Email: turn **off** "Allow new users to sign up". Save.
+2. Authentication → Users → Add user → Send invitation → your own email. Open the email and set a password. You are now the admin.
+3. Project Settings → API Keys: you will copy the `anon` (public) key and the `service_role` (secret) key into Vercel in step 4. The project URL is `https://jhsjmlpsylqusxhbiohi.supabase.co`.
 
 ## 3. Encryption key for stored client logins
 
@@ -45,7 +43,7 @@ Copy the output somewhere safe (password manager). This is `LOGIN_ENCRYPTION_KEY
 
 4. Deploy. Copy the URL Vercel gives you.
 5. Back in Supabase → Authentication → URL Configuration: Site URL = that Vercel URL; Redirect URLs: add `https://<vercel-url>/auth/callback`.
-6. Open the Vercel URL, sign in with the email and password from step 2.4. You are the admin. Invite the team from the Team page.
+6. Open the Vercel URL, sign in with the email and password from step 2.2. You are the admin. Invite the team from the Team page.
 
 ## 5. Custom domain (optional, later)
 

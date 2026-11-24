@@ -1,14 +1,11 @@
 # Database setup
 
-1. Create a Supabase project (free tier is fine). Region: US.
-2. Open **SQL Editor → New query**, paste the whole of `migrations/0001_init.sql`, run it once.
-3. **Authentication → Providers**: keep Email enabled, turn **off** "Allow new users to sign up" (admins invite people from the Team page).
-4. **Authentication → URL configuration**: set Site URL to the app's URL and add `<app-url>/auth/callback` to the redirect list.
-5. **Project Settings → API**: copy the project URL, the anon key and the service role key into the app's environment variables (see `.env.example` in the project root).
-6. First admin: **Authentication → Users → Invite user** with your email. After you accept, run in the SQL editor:
+The schema lives in `migrations/` and is applied to the Supabase project in order. `0001_init.sql` creates every table, the row level security policies and the private `reports` bucket; `0002_hardening.sql` locks down the helper functions and makes the first profile ever created an admin.
 
-```sql
-update profiles set role = 'admin' where email = 'you@leadsgeeks.ai';
-```
+For the live project these migrations have already been applied. Any future schema change goes in a new numbered file here and is applied to the project the same way (Supabase MCP `apply_migration` or the SQL Editor), so this folder stays the source of truth.
 
-Everyone after that is invited from the CRM's Team page.
+Dashboard settings that are not SQL (see `../SETUP.md` section 2 and 4):
+
+- Authentication → Providers → Email: "Allow new users to sign up" **off**. Admins invite people from the CRM's Team page.
+- Authentication → URL configuration: Site URL = the app URL; add `<app-url>/auth/callback` to the redirect list.
+- Project Settings → API Keys: project URL, `anon` key and `service_role` key go into the app's environment variables (see `../.env.example`).
