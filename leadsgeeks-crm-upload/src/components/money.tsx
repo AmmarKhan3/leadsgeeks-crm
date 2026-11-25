@@ -1,6 +1,7 @@
 "use client";
 import { useSyncExternalStore } from "react";
 import { usd } from "@/lib/format";
+import { Icon } from "./icons";
 
 const KEY = "lg-crm-hide-money";
 const EVT = "lg-money";
@@ -20,25 +21,45 @@ function subscribe(cb: () => void) {
     window.removeEventListener("storage", cb);
   };
 }
-const useHidden = () => useSyncExternalStore(subscribe, read, () => true);
+export const useHiddenMoney = () => useSyncExternalStore(subscribe, read, () => true);
+export function setHiddenMoney(hidden: boolean) {
+  try {
+    localStorage.setItem(KEY, hidden ? "1" : "0");
+  } catch {}
+  window.dispatchEvent(new Event(EVT));
+}
 
 /** Top-bar eye: dollar amounts are blurred by default, per browser. */
 export function MoneyToggle() {
-  const hidden = useHidden();
-  const toggle = () => {
-    try {
-      localStorage.setItem(KEY, hidden ? "0" : "1");
-    } catch {}
-    window.dispatchEvent(new Event(EVT));
-  };
+  const hidden = useHiddenMoney();
   return (
-    <button className="btn h-9" onClick={toggle} title={hidden ? "Show dollar amounts" : "Hide dollar amounts"} type="button">
-      {hidden ? "Show $" : "Hide $"}
+    <button className={`iconbtn ${hidden ? "" : "on"}`} onClick={() => setHiddenMoney(!hidden)} aria-pressed={!hidden} title={hidden ? "Amounts hidden. Click to show dollar figures." : "Amounts visible. Click to hide dollar figures."} type="button">
+      <Icon n={hidden ? "eyeOff" : "eye"} />
     </button>
   );
 }
 
-export function Money({ value }: { value: number }) {
-  const hidden = useHidden();
-  return <span className={`money font-mono ${hidden ? "blur" : ""}`}>{usd(value)}</span>;
+/** Settings-page switch for the same preference. */
+export function MoneySwitch() {
+  const hidden = useHiddenMoney();
+  return (
+    <label className="switch" style={{ justifyContent: "space-between", width: "100%" }}>
+      <span>
+        <b style={{ fontWeight: 500 }}>Hide dollar amounts</b>
+        <span className="hint small" style={{ display: "block", color: "var(--fg-3)" }}>Blurs MRR, billing and upsell figures everywhere until you reveal them with the eye button in the top bar. Handy when sharing your screen.</span>
+      </span>
+      <input type="checkbox" checked={hidden} onChange={(e) => setHiddenMoney(e.target.checked)} />
+      <i />
+    </label>
+  );
+}
+
+export function Money({ value, suffix }: { value: number; suffix?: string }) {
+  const hidden = useHiddenMoney();
+  return (
+    <span className={`money num ${hidden ? "blur" : ""}`} title={hidden ? "Amounts are hidden. Use the eye button in the top bar to show them." : undefined}>
+      {usd(value)}
+      {suffix ? <span className="faint">{suffix}</span> : null}
+    </span>
+  );
 }

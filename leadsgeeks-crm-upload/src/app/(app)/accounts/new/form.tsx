@@ -1,24 +1,51 @@
 "use client";
 import { useState, useTransition } from "react";
-import { INDUSTRY_GROUPS, US_STATES, SERVICES, PLATFORMS, STATUSES, STATUS_HELP, BACKEND_SPECIALTIES, CHECKLIST_GROUPS, neededItems, checkLabel, SETUP_KEYS } from "@/lib/constants";
+import Link from "next/link";
+import { INDUSTRY_GROUPS, INDUSTRIES, US_STATES, SERVICES, PLATFORMS, STATUSES, STATUS_HELP, CHECKLIST_GROUPS, ACCESS_NEEDS, neededItems, SETUP_KEYS } from "@/lib/constants";
 import type { Profile } from "@/lib/supabase/server";
+import { Icon } from "@/components/icons";
+import { BackendRows } from "@/app/(app)/accounts/[id]/widgets";
 import { createAccount } from "./actions";
 
-const OWNERS: [string, string][] = [["us", "LeadsGeeks"], ["client", "Client"], ["agency", "Other"]];
+const HINTS: Record<string, Record<string, string>> = {
+  built_by: { us: "We built or are building it", client: "DIY or in-house", agency: "Freelancer or previous agency" },
+  hosted_by: { us: "On our hosting", client: "Client's own hosting account", agency: "Previous agency's hosting" },
+  domain_by: { us: "In our registrar account", client: "Client's GoDaddy, Namecheap, etc.", agency: "Held by a third party" },
+};
 
 export function NewAccountForm({ me, team }: { me: Profile; team: Profile[] }) {
   const [step, setStep] = useState(1);
   const [industry, setIndustry] = useState("");
   const [services, setServices] = useState<string[]>(["Local SEO", "GBP"]);
+  const [other, setOther] = useState(false);
   const [platform, setPlatform] = useState("WordPress");
-  const [owners, setOwners] = useState({ built_by: "us", hosted_by: "us", domain_by: "client" });
+  const [owners, setOwners] = useState<Record<"built_by" | "hosted_by" | "domain_by", string>>({ built_by: "us", hosted_by: "us", domain_by: "client" });
   const [checks, setChecks] = useState<Record<string, string>>({});
-  const [backend, setBackend] = useState([{ user_id: "", specialty: "SEO" }]);
+  const [backend, setBackend] = useState(me.role === "cs" ? [] : [{ user_id: "", specialty: "SEO" }, { user_id: "", specialty: "GBP" }]);
+  const [business, setBusiness] = useState("");
+  const [status, setStatus] = useState("Onboarding");
   const [busy, start] = useTransition();
   const [err, setErr] = useState("");
   const by = (r: string) => team.filter((u) => u.active && u.role === r);
   const needed = neededItems(services, platform);
-  const defaultCheck = (k: string) => checks[k] ?? (k === "domain" && owners.domain_by === "us" ? "have" : k === "cms" && owners.built_by === "us" ? "have" : "pending");
+  const defaultCheck = (k: string) => {
+    if (["cms", "hosting"].includes(k) && owners.built_by === "us" && owners.hosted_by === "us") return "have";
+    if (k === "domain" && owners.domain_by === "us") return "have";
+    return "requested";
+  };
+  const st = (k: string) => checks[k] ?? defaultCheck(k);
+  const inHand = needed.filter((i) => st(i.key) === "have").length;
+  const toReq = needed.filter((i) => st(i.key) === "requested").length;
+  const groups = CHECKLIST_GROUPS.filter((g) => needed.some((i) => i.group === g.key));
+  const labelOwner = (k: string, v: string) => (v === "us" ? "LeadsGeeks" : v === "client" ? "Client" : k === "domain_by" ? "Third party" : "Other");
+
+  const f = (name: string, label: string, type = "text", ph = "", span = false, extra: React.ReactNode = null) => (
+    <div className={`field ${span ? "span2" : ""}`}>
+      <label htmlFor={`w-${name}`}>{label}</label>
+      <input type={type} id={`w-${name}`} name={name} placeholder={ph} />
+      {extra}
+    </div>
+  );
 
   return (
     <form
@@ -32,287 +59,256 @@ export function NewAccountForm({ me, team }: { me: Profile; team: Profile[] }) {
           }
         });
       }}
-      className="flex flex-col gap-4"
+      className="stack"
+      style={{ gap: 20 }}
     >
-      <div className="flex gap-2 text-sm">
-        {["Business & contact", "Services & website", "Team"].map((l, i) => (
-          <button type="button" key={l} onClick={() => setStep(i + 1)} className={`px-3 h-8 rounded-full border ${step === i + 1 ? "bg-ink text-white border-ink" : "border-line text-fg-2"}`}>
-            {i + 1}. {l}
-          </button>
+      <div className="steps">
+        {["Business & contact", "Services & website", "Assign team"].map((l, i) => (
+          <div key={l} className={step === i + 1 ? "on" : step > i + 1 ? "done" : ""} onClick={() => step > i + 1 && setStep(i + 1)} style={step > i + 1 ? { cursor: "pointer" } : undefined}>
+            <i>{step > i + 1 ? "✓" : i + 1}</i>
+            <span>{l}</span>
+          </div>
         ))}
       </div>
-      {err ? <div className="banner bad">{err}</div> : null}
+      {err ? <div className="banner bad"><Icon n="alert" /><div>{err}</div></div> : null}
 
-      {/* Step 1 (always mounted so values submit) */}
-      <div className={`card card-b grid md:grid-cols-2 gap-3 ${step === 1 ? "" : "hidden"}`}>
-        <div className="field md:col-span-2">
-          <label>Business name *</label>
-          <input name="business" required />
-        </div>
-        <div className="field">
-          <label>Industry *</label>
-          <select name="industry" required value={industry} onChange={(e) => setIndustry(e.target.value)}>
-            <option value="">Pick one</option>
-            {INDUSTRY_GROUPS.map((g) => (
-              <optgroup key={g.label} label={g.label}>
-                {g.items.map((i) => (
-                  <option key={i}>{i}</option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </div>
-        {industry === "Other (specify)" ? (
-          <div className="field">
-            <label>Which industry?</label>
-            <input name="industry_other" required />
-          </div>
-        ) : (
-          <div className="field">
-            <label>Client since</label>
-            <input name="client_since" type="date" defaultValue={new Date().toISOString().slice(0, 10)} />
-          </div>
-        )}
-        <div className="field">
-          <label>Business phone</label>
-          <input name="phone" type="tel" />
-        </div>
-        <div className="field">
-          <label>Business email</label>
-          <input name="email" type="email" />
-        </div>
-        <div className="field md:col-span-2">
-          <label>Street</label>
-          <input name="street" />
-        </div>
-        <div className="field">
-          <label>City *</label>
-          <input name="city" required />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="field">
-            <label>State *</label>
-            <select name="state" required defaultValue="">
-              <option value="">—</option>
-              {US_STATES.map(([c, n]) => (
-                <option key={c} value={c}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label>ZIP</label>
-            <input name="zip" inputMode="numeric" pattern="[0-9]{5}" maxLength={5} />
-          </div>
-        </div>
-        <div className="field">
-          <label>Website</label>
-          <input name="website" type="url" placeholder="https://" />
-        </div>
-        <div className="field">
-          <label>Google Business Profile link</label>
-          <input name="gbp_url" type="url" placeholder="https://maps.app.goo.gl/…" />
-        </div>
-        <div className="md:col-span-2 eyebrow mt-2">Primary contact</div>
-        <div className="field">
-          <label>Name *</label>
-          <input name="contact_name" required />
-        </div>
-        <div className="field">
-          <label>Title</label>
-          <input name="contact_title" placeholder="Owner" />
-        </div>
-        <div className="field">
-          <label>Phone</label>
-          <input name="contact_phone" type="tel" />
-        </div>
-        <div className="field">
-          <label>Email</label>
-          <input name="contact_email" type="email" />
-        </div>
-      </div>
-
-      {/* Step 2 */}
-      <div className={`grid lg:grid-cols-[1.2fr_1fr] gap-4 items-start ${step === 2 ? "" : "hidden"}`}>
-        <div className="card card-b flex flex-col gap-4">
-          <div>
-            <div className="font-semibold">Services for this client</div>
-            <div className="text-xs text-fg-3 mb-2">Tick everything we handle for them.</div>
-            <div className="flex flex-wrap gap-2">
-              {SERVICES.map((s) => (
-                <label key={s} className={`px-3 h-8 inline-flex items-center gap-2 rounded-full border cursor-pointer text-sm ${services.includes(s) ? "bg-accent-soft border-accent text-accent-deep" : "border-line"}`}>
-                  <input type="checkbox" name="services" value={s} checked={services.includes(s)} onChange={(e) => setServices(e.target.checked ? [...services, s] : services.filter((x) => x !== s))} className="sr-only" />
-                  {s}
-                </label>
-              ))}
+      <div className="card">
+        {/* Step 1 — kept mounted so its values submit with the form */}
+        <div className="card-b" hidden={step !== 1}>
+          <div className="form-grid">
+            <div className="field span2">
+              <label htmlFor="w-business">Business name</label>
+              <input type="text" id="w-business" name="business" placeholder="e.g. Summit Peak Roofing" required value={business} onChange={(e) => setBusiness(e.target.value)} />
             </div>
-            <input name="service_other" placeholder="What else do we handle?" className="mt-2 h-9 px-3 rounded-[var(--radius)] border border-line bg-surface text-sm w-full" />
+            <div className="field">
+              <label htmlFor="w-industry">Industry</label>
+              <select id="w-industry" name="industry" required value={industry} onChange={(e) => setIndustry(e.target.value)}>
+                <option value="">Choose…</option>
+                {INDUSTRY_GROUPS.map((g) => (
+                  <optgroup key={g.label} label={g.label}>
+                    {g.items.map((i) => (
+                      <option key={i}>{i}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              <span className="hint">{INDUSTRIES.length - 1} trades we serve, grouped as on the website.</span>
+            </div>
+            {industry === "Other (specify)" ? f("industry_other", "Which trade?", "text", "e.g. Appliance repair") : f("phone", "Business phone", "tel", "(555) 555-0100")}
+            {industry === "Other (specify)" ? f("phone", "Business phone", "tel", "(555) 555-0100") : null}
+            {f("email", "Business email", "email", "info@business.com")}
+            {f("website", "Website", "url", "https://")}
+            <div className="span2 eyebrow" style={{ marginTop: 6 }}>Business address · United States only</div>
+            {f("street", "Street address", "text", "123 Main St, Suite 200", true)}
+            <div className="field">
+              <label htmlFor="w-city">City</label>
+              <input type="text" id="w-city" name="city" required />
+            </div>
+            <div className="field">
+              <label htmlFor="w-state">State</label>
+              <select id="w-state" name="state" required defaultValue="">
+                <option value="">Choose state…</option>
+                {US_STATES.map(([c, n]) => (
+                  <option key={c} value={c}>{n} ({c})</option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="w-zip">ZIP code</label>
+              <input type="text" id="w-zip" name="zip" placeholder="12345" inputMode="numeric" pattern="[0-9]{5}(-[0-9]{4})?" />
+            </div>
+            <div className="field">
+              <label>Country</label>
+              <input type="text" value="United States" disabled />
+              <span className="hint">We only serve US businesses.</span>
+            </div>
+            {f("gbp_url", "Google Business Profile link", "url", "https://maps.google.com/…", true)}
+            <div className="field">
+              <label htmlFor="w-client_since">Client since</label>
+              <input type="date" id="w-client_since" name="client_since" defaultValue={new Date().toISOString().slice(0, 10)} />
+            </div>
+            <div className="span2 eyebrow" style={{ marginTop: 6 }}>Primary contact</div>
+            <div className="field">
+              <label htmlFor="w-contact_name">Name</label>
+              <input type="text" id="w-contact_name" name="contact_name" required />
+            </div>
+            {f("contact_title", "Title", "text", "Owner")}
+            {f("contact_phone", "Phone", "tel")}
+            {f("contact_email", "Email", "email")}
           </div>
-          <div className="flex flex-col gap-2">
-            {(["built_by", "hosted_by", "domain_by"] as const).map((k) => (
-              <div key={k} className="flex items-center gap-3 flex-wrap">
-                <span className="w-28 text-sm text-fg-2">{k === "built_by" ? "Built by" : k === "hosted_by" ? "Hosted by" : "Domain held by"}</span>
-                <div className="inline-flex rounded-[var(--radius)] border border-line overflow-hidden">
-                  {OWNERS.map(([v, l]) => (
-                    <button type="button" key={v} onClick={() => setOwners({ ...owners, [k]: v })} className={`px-3 h-8 text-sm ${owners[k] === v ? "bg-ink text-white" : "bg-surface hover:bg-surface-2"}`}>
-                      {k === "domain_by" && v === "agency" ? "Third party" : l}
+        </div>
+
+        {/* Step 2 */}
+        <div className="splitb" hidden={step !== 2}>
+          <div className="form">
+            <div className="sec">
+              <div className="sec-h"><h3>Services for this client</h3><span className="muted small">tick everything we handle for them</span></div>
+              <div className="checks">
+                {SERVICES.map((s) => {
+                  const n = Object.values(ACCESS_NEEDS).filter((v) => v.includes(s)).length;
+                  const on = services.includes(s);
+                  return (
+                    <button type="button" key={s} className={`ck ${on ? "on" : ""}`} onClick={() => setServices(on ? services.filter((x) => x !== s) : [...services, s])}>
+                      <span className="box"><Icon n="check" /></span>
+                      <b>{s}</b>
+                      <span className="need">{n ? `needs ${n} access` : ""}</span>
                     </button>
-                  ))}
+                  );
+                })}
+                {services.map((s) => <input key={s} type="hidden" name="services" value={s} />)}
+                <div className={`ck ${other ? "on" : ""}`}>
+                  <button type="button" className="ckbtn" onClick={() => setOther(!other)}><span className="box"><Icon n="check" /></span><b>Other</b></button>
+                  {other ? <input type="text" name="service_other" placeholder="What else do we handle? e.g. Yelp Ads, email newsletter" /> : null}
                 </div>
-                <input type="hidden" name={k} value={owners[k]} />
-                {owners[k] === "agency" ? <input name={`${k}_name`} placeholder="Who?" className="h-8 px-2 rounded-[var(--radius)] border border-line text-sm" /> : null}
               </div>
-            ))}
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="field">
-              <label>Platform</label>
-              <select name="platform" value={platform} onChange={(e) => setPlatform(e.target.value)}>
-                {PLATFORMS.map((p) => (
-                  <option key={p}>{p}</option>
-                ))}
-              </select>
             </div>
-            <div className="field">
-              <label>Starting status</label>
-              <select name="status" defaultValue="Signed">
-                {STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {s} · {STATUS_HELP[s]}
-                  </option>
+            <div className="sec">
+              <div className="sec-h"><h3>Website</h3></div>
+              <div className="own-rows">
+                {(["built_by", "hosted_by", "domain_by"] as const).map((k) => (
+                  <div key={k} className="own-row">
+                    <span className="own-lbl">{k === "built_by" ? "Built by" : k === "hosted_by" ? "Hosted by" : "Domain held by"}</span>
+                    <span className="tri">
+                      {["us", "client", "agency"].map((v) => (
+                        <button type="button" key={v} className={`own ${owners[k] === v ? "on" : ""}`} onClick={() => setOwners({ ...owners, [k]: v })} title={HINTS[k][v]}>{labelOwner(k, v)}</button>
+                      ))}
+                    </span>
+                    <input type="hidden" name={k} value={owners[k]} />
+                    {owners[k] === "agency" ? <input type="text" className="own-name" name={`${k}_name`} placeholder={k === "domain_by" ? "Registrar or agency name" : "Agency or freelancer name"} /> : <span className="own-hint">{HINTS[k][owners[k]]}</span>}
+                  </div>
                 ))}
-              </select>
+              </div>
+              <div className="form-grid">
+                <div className="field">
+                  <label htmlFor="w-platform">Platform</label>
+                  <select id="w-platform" name="platform" value={platform} onChange={(e) => setPlatform(e.target.value)}>
+                    {PLATFORMS.map((p) => (
+                      <option key={p}>{p}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="w-status">Starting status</label>
+                  <select id="w-status" name="status" value={status} onChange={(e) => setStatus(e.target.value)}>
+                    {STATUSES.map((s) => (
+                      <option key={s} value={s}>{s} · {STATUS_HELP[s]}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-        <div className="card">
-          <div className="card-h">
-            <h3>What we&apos;ll need</h3>
-            <span className="ml-auto text-xs text-fg-3">{needed.length} items</span>
-          </div>
-          <div className="card-b flex flex-col gap-3">
-            {CHECKLIST_GROUPS.map((g) => {
-              const items = needed.filter((i) => i.group === g.key);
-              if (!items.length) return null;
-              return (
+          <aside className="side">
+            <h3>What we&apos;ll need from the client<span className="cnt">{inHand}/{needed.length}</span></h3>
+            <div className="muted small">Built from the services ticked. Set each item to what&apos;s true today; this becomes the account&apos;s Access checklist.</div>
+            {needed.length ? (
+              groups.map((g) => (
                 <div key={g.key}>
-                  <div className="eyebrow mb-1">{g.label}</div>
-                  {items.map((i) => {
-                    const v = defaultCheck(i.key);
-                    const setup = SETUP_KEYS.includes(i.key);
-                    const opts: [string, string][] = setup ? [["have", "Set up"], ["pending", "Pending"], ["none", "Not needed"]] : [["have", "Have it"], ["requested", "Requested"], ["none", "Not needed"]];
-                    return (
-                      <div key={i.key} className="flex items-center gap-2 py-1.5 border-b border-line last:border-b-0">
-                        <span className="flex-1 text-sm">{i.label}</span>
-                        <div className="inline-flex rounded-[var(--radius)] border border-line overflow-hidden">
-                          {opts.map(([ov, ol]) => (
-                            <button type="button" key={ov} onClick={() => setChecks({ ...checks, [i.key]: ov })} className={`px-2 h-7 text-xs ${v === ov ? "bg-ink text-white" : "bg-surface hover:bg-surface-2"}`}>
-                              {ol === "Have it" ? checkLabel(i.key, "have") : ol}
-                            </button>
-                          ))}
+                  <div className="acc-group">{g.label}</div>
+                  <div className="side-list">
+                    {needed.filter((i) => i.group === g.key).map((i) => {
+                      const s = st(i.key);
+                      const setup = SETUP_KEYS.includes(i.key);
+                      return (
+                        <div key={i.key} className={`item ${s}`}>
+                          <span className="n">{i.label}</span>
+                          <span className="tri sm">
+                            {([["have", setup ? "Set up" : "Have it"], ["requested", setup ? "Pending" : "Requested"], ["none", "Not needed"]] as const).map(([v, l]) => (
+                              <button type="button" key={v} className={`${v} ${s === v ? "on" : ""}`} onClick={() => setChecks({ ...checks, [i.key]: v })} title={l}>{l}</button>
+                            ))}
+                          </span>
+                          <input type="hidden" name={`check_${i.key}`} value={s === "requested" && setup ? "pending" : s} />
                         </div>
-                        <input type="hidden" name={`check_${i.key}`} value={v} />
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              );
-            })}
-          </div>
+              ))
+            ) : (
+              <div className="acc-empty">Tick a service to see what&apos;s needed.</div>
+            )}
+            <div className="foot">{toReq ? <>{toReq} item{toReq === 1 ? "" : "s"} will be marked <b>Requested</b> on the checklist.</> : "Nothing to request from the client."}</div>
+          </aside>
         </div>
-      </div>
 
-      {/* Step 3 */}
-      <div className={`card card-b grid md:grid-cols-3 gap-3 ${step === 3 ? "" : "hidden"}`}>
-        <div className="field">
-          <label>CS owner</label>
-          {me.role === "cs" ? (
-            <>
-              <input value={me.name} disabled />
-              <span className="hint">You&apos;ll be the CS owner. Admins and team leads can assign others.</span>
-            </>
-          ) : (
-            <select name="cs_id" defaultValue="">
-              <option value="">—</option>
-              {[...by("cs"), ...by("lead"), ...by("admin")].map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-        <div className="field">
-          <label>Team lead {me.role === "cs" ? "*" : ""}</label>
-          <select name="lead_id" defaultValue={me.role === "lead" ? me.id : ""} required={me.role === "cs"}>
-            <option value="">—</option>
-            {by("lead").map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name}
-              </option>
-            ))}
-          </select>
-          {me.role === "cs" ? <span className="hint">The team lead assigns the backend team.</span> : null}
-        </div>
-        <div className="field">
-          <label>Sales rep</label>
-          <select name="sales_id" defaultValue="">
-            <option value="">—</option>
-            {by("sales").map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        {me.role !== "cs" ? (
-          <div className="md:col-span-3">
-            <div className="eyebrow mb-2">Backend team</div>
-            {backend.map((r, i) => (
-              <div key={i} className="flex gap-2 items-center mb-2">
-                <select name="backend_user" value={r.user_id} onChange={(e) => setBackend(backend.map((x, j) => (j === i ? { ...x, user_id: e.target.value } : x)))} className="h-9 px-3 rounded-[var(--radius)] border border-line bg-surface text-sm flex-1">
-                  <option value="">Pick a backend person</option>
-                  {by("backend").map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}
-                    </option>
-                  ))}
-                </select>
-                <select name="backend_specialty" value={r.specialty} onChange={(e) => setBackend(backend.map((x, j) => (j === i ? { ...x, specialty: e.target.value } : x)))} className="h-9 px-3 rounded-[var(--radius)] border border-line bg-surface text-sm">
-                  {BACKEND_SPECIALTIES.map((s) => (
-                    <option key={s}>{s}</option>
-                  ))}
-                </select>
-                <button type="button" className="btn sm ghost" onClick={() => setBackend(backend.filter((_, j) => j !== i))}>
-                  Remove
-                </button>
+        {/* Step 3 */}
+        <div className="card-b" hidden={step !== 3}>
+          <div className="stack" style={{ gap: 20 }}>
+            <div className="form-grid">
+              <div className="field">
+                <label htmlFor="w-cs">Contact owner (Customer Success)</label>
+                {me.role === "cs" ? (
+                  <>
+                    <select id="w-cs" disabled defaultValue={me.id}><option value={me.id}>{me.name}</option></select>
+                    <span className="hint">You&apos;ll be the CS owner. Admins and team leads can assign someone else.</span>
+                  </>
+                ) : (
+                  <>
+                    <select id="w-cs" name="cs_id" defaultValue="">
+                      <option value="">Choose…</option>
+                      {[...by("cs"), ...by("lead"), ...by("admin")].map((u) => (
+                        <option key={u.id} value={u.id}>{u.name}</option>
+                      ))}
+                    </select>
+                    <span className="hint">Talks to the client and sees billing.</span>
+                  </>
+                )}
               </div>
-            ))}
-            <button type="button" className="btn sm" onClick={() => setBackend([...backend, { user_id: "", specialty: "GBP" }])}>
-              Add backend person
-            </button>
+              <div className="field">
+                <label htmlFor="w-sales">Sales rep</label>
+                <select id="w-sales" name="sales_id" defaultValue="">
+                  <option value="">Choose…</option>
+                  {by("sales").map((u) => (
+                    <option key={u.id} value={u.id}>{u.name}</option>
+                  ))}
+                </select>
+                <span className="hint">View-only access to this account.</span>
+              </div>
+              <div className="field">
+                <label htmlFor="w-lead">Team lead{me.role === "cs" ? " *" : ""}</label>
+                <select id="w-lead" name="lead_id" defaultValue={me.role === "lead" ? me.id : ""} required={me.role === "cs"}>
+                  <option value="">Choose…</option>
+                  {by("lead").map((u) => (
+                    <option key={u.id} value={u.id}>{u.name}</option>
+                  ))}
+                </select>
+                <span className="hint">{me.role === "cs" ? "Required. The team lead assigns the backend team." : "Responsible for the backend team on this account."}</span>
+              </div>
+              {me.role === "cs" ? (
+                <div className="field span2">
+                  <div className="banner info"><Icon n="info" /><div className="small">You don&apos;t assign backend people. Your team lead gets a notification and adds the SEO, GBP and other backend people after you create the account.</div></div>
+                </div>
+              ) : (
+                <div className="field span2">
+                  <label>Backend team</label>
+                  <BackendRows rows={backend} setRows={setBackend} people={by("backend")} />
+                  <span className="hint">Pre-filled from the services on step 2. The SEO person is the primary owner and gets the monthly report reminder; everyone listed can work the account.</span>
+                </div>
+              )}
+            </div>
+            <div className="banner ok">
+              <Icon n="check" />
+              <div>
+                <b>{business || "This account"}</b> will be created as <b>{status}</b> with {inHand} access item{inHand === 1 ? "" : "s"} in hand and {toReq} still to collect, {services.length + (other ? 1 : 0)} service tag{services.length + (other ? 1 : 0) === 1 ? "" : "s"}, and the owners above will be notified.{me.role === "admin" ? "" : <> <b>An admin must approve it before it goes live.</b></>}
+              </div>
+            </div>
           </div>
-        ) : null}
-        {me.role !== "admin" ? <div className="banner info md:col-span-3">An admin approves new accounts. Until then it stays visible to its team with a Pending banner.</div> : null}
-      </div>
+        </div>
 
-      <div className="flex gap-2 justify-end">
-        {step > 1 ? (
-          <button type="button" className="btn" onClick={() => setStep(step - 1)}>
-            Back
-          </button>
-        ) : null}
-        {step < 3 ? (
-          <button type="button" className="btn primary" onClick={() => setStep(step + 1)}>
-            Continue
-          </button>
-        ) : (
-          <button className="btn primary" disabled={busy}>
-            {busy ? "Creating…" : "Create account"}
-          </button>
-        )}
+        <div className="modal-f" style={{ justifyContent: "space-between" }}>
+          <div>{step > 1 ? <button type="button" className="btn" onClick={() => setStep(step - 1)}>Back</button> : <Link className="btn ghost" href="/accounts">Cancel</Link>}</div>
+          <div className="row">
+            {step < 3 ? (
+              <button type="button" className="btn primary" onClick={() => { const form = document.getElementById("w-business")?.closest("form"); if (step === 1 && form && !form.reportValidity()) return; setStep(step + 1); }}>
+                Continue <Icon n="chevron" />
+              </button>
+            ) : (
+              <button className="btn primary" disabled={busy}><Icon n="check" /> {busy ? "Creating…" : "Create account"}</button>
+            )}
+          </div>
+        </div>
       </div>
+      {me.role !== "admin" ? <input type="hidden" name="needs_approval" value="1" /> : null}
     </form>
   );
 }

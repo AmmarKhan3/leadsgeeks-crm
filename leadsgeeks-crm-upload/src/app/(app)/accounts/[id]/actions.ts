@@ -192,7 +192,7 @@ export async function markPaid(accountId: string, formData: FormData) {
   if (!me || !["admin", "cs"].includes(me.role)) throw new Error("Not allowed");
   const month = String(formData.get("month")) + "-01";
   const amount = Number(formData.get("amount") ?? 0);
-  const { error } = await supabase.from("payments").upsert({ account_id: accountId, month, amount, collected_by: me.id, collected_on: new Date().toISOString().slice(0, 10), note: String(formData.get("note") ?? "") || null });
+  const { error } = await supabase.from("payments").upsert({ account_id: accountId, month, amount, collected_by: me.id, collected_on: String(formData.get("collected_on") ?? "") || new Date().toISOString().slice(0, 10), note: String(formData.get("note") ?? "") || null });
   if (error) throw new Error(error.message);
   revalidatePath(`/accounts/${accountId}`);
 }

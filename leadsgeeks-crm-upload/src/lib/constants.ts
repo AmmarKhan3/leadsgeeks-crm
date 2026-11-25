@@ -80,7 +80,7 @@ export const STATUS_HELP: Record<AccountStatus, string> = {
   Churned: "Cancelled",
 };
 export const STATUS_TONE: Record<AccountStatus, string> = {
-  Signed: "info", Onboarding: "warn", Active: "ok", "On hold": "muted", "Past due": "bad", Churned: "muted",
+  Signed: "muted", Onboarding: "info", Active: "ok", "On hold": "warn", "Past due": "bad", Churned: "bad",
 };
 export const BILLABLE_STATUSES: AccountStatus[] = ["Active", "Past due"];
 

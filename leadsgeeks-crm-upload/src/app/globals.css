@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./prototype.css" layer(components);
 
 /* ---------- LeadsGeeks brand tokens (change these to white-label) ---------- */
 :root {
@@ -31,6 +32,11 @@
   --topbar-h: 60px;
   --shadow: 0 1px 2px rgba(19, 19, 19, 0.06), 0 4px 16px rgba(19, 19, 19, 0.06);
   --shadow-lg: 0 12px 40px rgba(19, 19, 19, 0.18);
+  /* fonts are loaded by next/font in layout.tsx */
+  --font-ui: var(--font-dm-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-dm-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-display: var(--font-fraunces), Georgia, "Times New Roman", serif;
+  color-scheme: light;
 }
 
 @theme inline {
@@ -57,155 +63,181 @@
   --color-bad-soft: var(--bad-soft);
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
-  --font-sans: var(--font-dm-sans), system-ui, sans-serif;
+  --font-sans: var(--font-ui);
   --font-mono: var(--font-dm-mono), ui-monospace, monospace;
-  --font-display: var(--font-fraunces), Georgia, serif;
+  --font-display: var(--font-display);
   --radius-brand: var(--radius);
 }
 
-html,
-body {
-  height: 100%;
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  a {
+    color: inherit;
+  }
+  button {
+    font: inherit;
+    color: inherit;
+  }
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    margin: 0;
+    text-wrap: balance;
+  }
+  p {
+    margin: 0;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 }
 
-body {
-  background: var(--bg);
-  color: var(--fg);
-  font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
-}
-
-h1,
-h2 {
-  font-family: var(--font-display);
-  font-weight: 500;
-  letter-spacing: -0.01em;
-}
-
-/* ---------- small shared components ---------- */
 @layer components {
-  .card {
-    @apply bg-surface border border-line rounded-[var(--radius)];
-    box-shadow: var(--shadow);
-  }
-  .card-h {
-    @apply flex items-center gap-3 px-5 py-3.5 border-b border-line;
-  }
-  .card-h h3 {
-    @apply text-[15px] font-semibold;
-  }
-  .card-b {
-    @apply p-5;
-  }
-  .btn {
-    @apply inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-[var(--radius)] border border-line bg-surface text-sm font-semibold text-fg cursor-pointer transition-colors;
-  }
-  .btn:hover {
-    @apply bg-surface-2;
-  }
-  .btn.primary {
-    @apply bg-accent border-accent text-white;
-  }
-  .btn.primary:hover {
-    @apply bg-accent-hover border-accent-hover;
-  }
-  .btn.sm {
-    @apply h-7 px-2.5 text-xs;
-  }
-  .btn.ghost {
-    @apply border-transparent bg-transparent;
-  }
-  .btn:disabled {
-    @apply opacity-50 cursor-not-allowed;
-  }
-  .field {
-    @apply flex flex-col gap-1.5;
-  }
-  .field label {
-    @apply text-xs font-semibold text-fg-2;
-  }
-  .field input,
-  .field select,
-  .field textarea {
-    @apply h-9 px-3 rounded-[var(--radius)] border border-line bg-surface text-sm text-fg outline-none;
-  }
-  .field textarea {
-    @apply h-auto py-2 min-h-20;
-  }
-  .field input:focus,
-  .field select:focus,
-  .field textarea:focus {
-    @apply border-accent ring-2 ring-accent-soft;
-  }
-  .field .hint {
-    @apply text-xs text-fg-3;
-  }
-  .pill {
-    @apply inline-flex items-center gap-1.5 h-6 px-2 rounded-full text-xs font-semibold whitespace-nowrap;
-  }
-  .pill.ok {
-    @apply bg-ok-soft text-ok;
-  }
-  .pill.warn {
-    @apply bg-warn-soft text-warn;
-  }
-  .pill.bad {
-    @apply bg-bad-soft text-bad;
-  }
-  .pill.info {
-    @apply bg-info-soft text-info;
-  }
-  .pill.muted {
-    @apply bg-surface-2 text-fg-2;
-  }
-  .pill.accent {
-    @apply bg-accent-soft text-accent-deep;
-  }
-  .eyebrow {
-    @apply font-mono text-[11px] tracking-[0.08em] uppercase text-fg-3;
-  }
-  .tbl {
-    @apply w-full text-sm border-collapse;
-  }
-  .tbl th {
-    @apply text-left text-[11px] font-semibold uppercase tracking-wider text-fg-3 px-4 py-2.5 border-b border-line bg-surface-2/60;
-  }
-  .tbl td {
-    @apply px-4 py-3 border-b border-line align-middle;
-  }
-  .tbl tbody tr:last-child td {
-    @apply border-b-0;
-  }
-  .tbl tbody tr.link:hover td {
-    @apply bg-surface-2/70 cursor-pointer;
-  }
-  .avatar {
-    @apply inline-flex items-center justify-center rounded-full bg-ink text-white font-semibold shrink-0;
-    width: 28px;
-    height: 28px;
-    font-size: 11px;
-  }
-  .avatar.sm {
-    width: 22px;
-    height: 22px;
-    font-size: 9px;
-  }
-  .banner {
-    @apply flex gap-3 items-start px-4 py-3 rounded-[var(--radius)] border text-sm;
-  }
-  .banner.warn {
-    @apply bg-warn-soft border-[#ecd9ab] text-[#6e4a0f];
-  }
-  .banner.info {
-    @apply bg-info-soft border-[#c9d6f0] text-[#23437f];
-  }
-  .banner.bad {
-    @apply bg-bad-soft border-[#f0c3bf] text-[#7a1f1a];
-  }
+  /* the app's money blur is per browser; see components/money.tsx */
   .money.blur {
     filter: blur(6px);
     user-select: none;
+    pointer-events: none;
+  }
+  /* in the real app tabs are links */
+  .tabs a {
+    background: none;
+    border: 0;
+    padding: 10px 14px;
+    font-weight: 600;
+    color: var(--fg-2);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    text-decoration: none;
+  }
+  .tabs a:hover {
+    color: var(--fg);
+  }
+  .tabs a.active {
+    color: var(--fg);
+    border-bottom-color: var(--accent);
+  }
+  .tabs a.locked {
+    color: var(--fg-3);
+  }
+  .tabs a svg {
+    width: 14px;
+    height: 14px;
+  }
+  /* nav icons rendered from React */
+  .nav a svg,
+  .btn svg,
+  .link svg {
+    flex: none;
+  }
+  .iconbtn svg {
+    width: 18px;
+    height: 18px;
+  }
+  /* table rows that are links */
+  .tbl td a.rowlink {
+    text-decoration: none;
+    color: inherit;
+  }
+  .tbl td a.rowlink:hover {
+    text-decoration: underline;
+    text-decoration-color: var(--line-strong);
+    text-underline-offset: 3px;
+  }
+  /* nav alias used in a few places */
+  .nav-link-icon {
+    width: 17px;
+    height: 17px;
+  }
+  /* legacy class names still used in a few components */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-3);
+  }
+  /* checkbox / radio keep their native width inside .field */
+  .field input[type="checkbox"],
+  .field input[type="radio"],
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: auto;
+  }
+  input[type="file"] {
+    width: 100%;
+  }
+  /* filter dropdowns rendered by React */
+  .fmenu .opt i {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+  }
+  /* checklist "pending" status (prototype called it pendingcs) */
+  .chip-status.pending {
+    background: var(--info-soft);
+    color: var(--info);
+  }
+  .side .item.requested .n,
+  .side .item.pending .n {
+    color: inherit;
+  }
+  /* modeseg radios rendered as labels */
+  .modeseg label {
+    border: 0;
+    background: var(--surface);
+    padding: 6px 14px;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--fg-2);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .modeseg label + label {
+    border-left: 1px solid var(--line-strong);
+  }
+  .modeseg label:has(input:checked) {
+    background: var(--ink);
+    color: #fff;
+  }
+  .modeseg label svg {
+    width: 14px;
+    height: 14px;
+  }
+  /* small helpers */
+  .r {
+    text-align: right;
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+  .nowrap {
+    white-space: nowrap;
   }
 }

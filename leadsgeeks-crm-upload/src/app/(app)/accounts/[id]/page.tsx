@@ -2,23 +2,27 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getProfile, createClient } from "@/lib/supabase/server";
 import { perms, canOpenLogins } from "@/lib/perms";
-import { getAccount, getChecklist, getLoginIndex, listTeam } from "@/lib/data";
-import { STATUSES, BILLING_METHODS, CHANGE_AREAS } from "@/lib/constants";
-import { fmtDate, fmtDateTime, monthLabel, thisMonth, lastMonth } from "@/lib/format";
-import { Person, StatusPill, Pill, Empty, Avatar } from "@/components/ui";
+import { getAccount, getChecklist, getLoginIndex, listTeam, ownerLabel, ord, type Account } from "@/lib/data";
+import { CHANGE_AREAS, ROLES, type Role } from "@/lib/constants";
+import { fmtDate, fmtDateTime, monthLabel, thisMonth, lastMonth, daysUntil } from "@/lib/format";
+import { Person, StatusPill, ApprovalChip, Pill, Empty, Avatar, TeamList, Tags, Stat, Banner } from "@/components/ui";
+import { Icon } from "@/components/icons";
 import { Money } from "@/components/money";
+import { PageTitle } from "@/components/page-title";
 import { Checklist } from "./checklist";
-import { TeamEditor, ReportLink, Confirm } from "./widgets";
-import { addNote, addUpsell, decideApproval, markPaid, resubmit, saveBilling, setRequestDone, setStatus, togglePin, uploadReport } from "./actions";
+import { ReassignButton, ReportLink, UploadReportButton, EditBillingButton, LogPaymentButton, AddUpsellButton, Confirm } from "./widgets";
+import { addNote, decideApproval, resubmit, setRequestDone, setStatus, togglePin } from "./actions";
+import { STATUSES } from "@/lib/constants";
 
 type Tab = "overview" | "checklist" | "reports" | "billing" | "notes" | "changes";
+type SP = { tab?: Tab; edit?: string; f?: string; view?: string; area?: string };
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const a = await getAccount((await params).id);
   return { title: a?.business ?? "Account" };
 }
 
-export default async function AccountPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ tab?: Tab; edit?: string }> }) {
+export default async function AccountPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<SP> }) {
   const { id } = await params;
   const sp = await searchParams;
   const me = (await getProfile())!;
@@ -28,209 +32,209 @@ export default async function AccountPage({ params, searchParams }: { params: Pr
   const tab: Tab = sp.tab ?? "overview";
   const supabase = await createClient();
   const canLogins = canOpenLogins(me, a);
-  const ownerName = (k: string, name: string | null) => (k === "us" ? "LeadsGeeks" : k === "client" ? "Client" : name || "Other");
-  const tabs: [Tab, string][] = [["overview", "Overview"], ["checklist", "Access checklist"], ["reports", "Reports"], ...(p.billing ? ([["billing", "Billing"]] as [Tab, string][]) : []), ["notes", "Notes & requests"], ["changes", "Change log"]];
+  const live = a.approval === "approved";
+  const lm = lastMonth();
+
+  const [checks, logins, { data: reports }, { count: openReqCount }, { count: noteCount }, { count: changeCount }, team] = await Promise.all([
+    getChecklist(a.id),
+    getLoginIndex(a.id),
+    supabase.from("reports").select("id, month, file_path, file_name, uploaded_at, uploader:profiles(name)").eq("account_id", a.id).order("month", { ascending: false }),
+    supabase.from("notes").select("id", { count: "exact", head: true }).eq("account_id", a.id).eq("kind", "request").eq("status", "open").eq("is_private", false),
+    supabase.from("notes").select("id", { count: "exact", head: true }).eq("account_id", a.id),
+    supabase.from("change_log").select("id", { count: "exact", head: true }).eq("account_id", a.id),
+    p.reassign || tab === "notes" ? listTeam() : Promise.resolve([]),
+  ]);
+  const rel = checks.filter((c) => c.status !== "none");
+  const have = rel.filter((c) => c.status === "have").length;
+  const requested = rel.filter((c) => c.status === "requested").length;
+  const missingReport = live && ["Active", "Past due"].includes(a.status) && a.client_since.slice(0, 7) < lm && !(reports ?? []).some((r) => r.month.startsWith(lm));
+
+  const tabs: [Tab, string, React.ReactNode][] = [
+    ["overview", "Overview", null],
+    ["checklist", "Access checklist", <span key="c" className={`badge ${requested ? "warn" : ""}`}>{have}/{rel.length}</span>],
+    ["reports", "Reports", missingReport ? <span key="r" className="badge warn">overdue</span> : <span key="r" className="badge">{reports?.length ?? 0}</span>],
+    ["billing", "Billing", p.billing ? null : <Icon key="b" n="lock" />],
+    ["notes", "Notes & requests", openReqCount ? <span key="n" className="badge warn">{openReqCount} open</span> : <span key="n" className="badge">{noteCount ?? 0}</span>],
+    ["changes", "Change log", <span key="g" className="badge">{changeCount ?? 0}</span>],
+  ];
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="text-xs text-fg-3">
-        <Link href="/accounts" className="hover:underline">
-          Accounts
-        </Link>{" "}
-        / {a.business}
+    <>
+      <PageTitle title={a.business} />
+      <div className="row small">
+        <Link href="/accounts" className="link">{p.seesAll ? "All accounts" : "My accounts"}</Link>
+        <span className="faint">/</span>
+        <span className="muted">{a.business}</span>
       </div>
 
-      {a.approval !== "approved" ? (
-        <div className={`banner ${a.approval === "pending" ? "warn" : "bad"} items-center`}>
-          <div className="flex-1">
-            <b>{a.approval === "pending" ? "Pending approval" : "Rejected"}</b> · created {fmtDate(a.approval_requested_at ?? a.created_at)}
-            {a.approval_reason ? ` · ${a.approval_reason}` : ""}
-            <span className="block text-xs opacity-80">Not counted in alerts, billing or report tracking until an admin approves it.</span>
-          </div>
-          {p.approve && a.approval === "pending" ? (
-            <div className="flex gap-2">
-              <form action={decideApproval.bind(null, a.id, true, "")}>
-                <button className="btn primary sm">Approve</button>
-              </form>
-              <Confirm label="Reject" prompt="Reason for rejecting (the creator sees this)" action={decideApproval.bind(null, a.id, false)} />
-            </div>
-          ) : null}
-          {a.approval === "rejected" && (p.approve || a.approval_requested_by === me.id) ? (
-            <form action={resubmit.bind(null, a.id)}>
-              <button className="btn sm">Resubmit for approval</button>
-            </form>
-          ) : null}
-        </div>
+      {a.approval === "pending" ? (
+        <Banner tone="warn" icon="shield" actions={p.approve ? (
+          <>
+            <form action={decideApproval.bind(null, a.id, true, "")}><button className="btn primary sm"><Icon n="check" /> Approve</button></form>
+            <Confirm label="Reject" prompt="Reason for rejecting (the creator sees this)" action={decideApproval.bind(null, a.id, false)} className="btn sm ghost danger" />
+          </>
+        ) : undefined}>
+          <b>Pending admin approval.</b> Created by {a.requester?.name ?? "someone"} on {fmtDate(a.approval_requested_at ?? a.created_at)}. {p.approve ? "Approve it to make it live; reports, billing and alerts start then." : "An admin will review it. You can keep filling in access and notes meanwhile; reports and billing start after approval."}
+        </Banner>
+      ) : a.approval === "rejected" ? (
+        <Banner tone="bad" icon="alert" actions={p.approve || a.approval_requested_by === me.id ? (
+          <>
+            <form action={resubmit.bind(null, a.id)}><button className="btn primary sm">Resubmit for approval</button></form>
+            {p.approve ? <form action={decideApproval.bind(null, a.id, true, "")}><button className="btn sm"><Icon n="check" /> Approve anyway</button></form> : null}
+          </>
+        ) : undefined}>
+          <b>Rejected by {a.decider?.name ?? "an admin"} on {fmtDate(a.approval_decided_at)}.</b> {a.approval_reason ?? ""} {p.approve || a.approval_requested_by === me.id ? "Fix the details and resubmit." : ""}
+        </Banner>
       ) : null}
 
-      <div className="card card-b">
-        <div className="flex items-start gap-3 flex-wrap">
-          <div className="flex-1 min-w-60">
-            <div className="flex items-center gap-3 flex-wrap">
-              <h2 className="text-2xl">{a.business}</h2>
-              {p.editAccount ? (
-                <form action={async (fd) => { "use server"; await setStatus(a.id, String(fd.get("status"))); }}>
-                  <select name="status" defaultValue={a.status} className="pill muted h-7 pr-6 cursor-pointer" onChange={undefined}>
-                    {STATUSES.map((s) => (
-                      <option key={s}>{s}</option>
-                    ))}
-                  </select>
-                  <button className="btn sm ml-1">Set</button>
-                </form>
-              ) : (
-                <StatusPill status={a.status} />
-              )}
-            </div>
-            <div className="text-fg-2 text-sm mt-1">
-              {a.industry === "Other (specify)" ? a.industry_other : a.industry} · {a.city}, {a.state} · Client since {fmtDate(a.client_since)}
-            </div>
-            <div className="flex gap-2 mt-3 flex-wrap">
-              {a.website ? (
-                <a className="btn sm" href={a.website} target="_blank" rel="noopener">
-                  Website ↗
-                </a>
-              ) : null}
-              {a.gbp_url ? (
-                <a className="btn sm" href={a.gbp_url} target="_blank" rel="noopener">
-                  Google Business Profile ↗
-                </a>
-              ) : null}
-              {p.editAccount ? (
-                <Link className="btn sm ghost" href={`/accounts/${a.id}/edit`}>
-                  Edit details
-                </Link>
-              ) : null}
-            </div>
+      {!a.backend.length && a.approval !== "rejected" ? (
+        <Banner tone="warn" icon="users" actions={p.reassign ? <ReassignButton accountId={a.id} team={team} csId={a.cs_id} leadId={a.lead_id} salesId={a.sales_id} backend={a.backend.map((b) => ({ user_id: b.user_id, specialty: b.specialty }))} label="Assign backend team" primary autoOpen={sp.edit === "team"} /> : undefined}>
+          <b>No backend team yet.</b> {p.reassign ? "Add the SEO, GBP and other backend people so work can start." : `${a.lead?.name ?? "The team lead"} will assign the backend team.`}
+        </Banner>
+      ) : null}
+
+      <div className="card acct-head">
+        <div className="id">
+          <div className="row">
+            <h2>{a.business}</h2>
+            {p.editAccount ? (
+              <form action={async (fd) => { "use server"; await setStatus(a.id, String(fd.get("status"))); }} className="row" style={{ gap: 6 }}>
+                <StatusSelect status={a.status} />
+                <button className="btn sm ghost" title="Save status">Set</button>
+              </form>
+            ) : (
+              <StatusPill status={a.status} />
+            )}
+            <ApprovalChip approval={a.approval} />
+          </div>
+          <div className="meta">
+            <span>{a.industry === "Other (specify)" ? a.industry_other : a.industry}</span>
+            <span className="faint">·</span>
+            <span><Icon n="pin" size={14} style={{ display: "inline", verticalAlign: -2 }} /> {a.city}, {a.state}</span>
+            <span className="faint">·</span>
+            <span className="mono">Client since {fmtDate(a.client_since)}</span>
+          </div>
+          <div className="quick">
+            {a.website ? <a className="btn sm" href={a.website} target="_blank" rel="noopener"><Icon n="globe" /> Website <Icon n="external" /></a> : null}
+            {a.gbp_url ? <a className="btn sm" href={a.gbp_url} target="_blank" rel="noopener"><Icon n="pin" /> Google Business Profile <Icon n="external" /></a> : null}
+            {p.editAccount ? <Link className="btn sm ghost" href={`/accounts/${a.id}/edit`}><Icon n="edit" /> Edit details</Link> : null}
           </div>
         </div>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-5 pt-5 border-t border-line">
-          <div>
-            <div className="eyebrow mb-1.5">CS owner</div>
-            <Person name={a.cs?.name} />
-          </div>
-          <div>
-            <div className="eyebrow mb-1.5">Backend team</div>
-            {a.backend.length ? (
-              <div className="flex flex-col gap-1.5">
-                {a.backend.map((b) => (
-                  <span key={b.user_id + b.specialty} className="inline-flex items-center gap-2">
-                    <Avatar name={b.profile?.name ?? "?"} /> {b.profile?.name} <span className="eyebrow">{b.specialty}</span>
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <span className="text-warn text-sm">Not assigned yet{a.lead?.name ? ` · waiting on ${a.lead.name.split(" ")[0]}` : ""}</span>
-            )}
-          </div>
-          <div>
-            <div className="eyebrow mb-1.5">Team lead</div>
-            <Person name={a.lead?.name} />
-          </div>
-          <div>
-            <div className="eyebrow mb-1.5">Sales rep</div>
-            <Person name={a.sales?.name} />
-            {p.reassign ? (
-              <Link href={`/accounts/${a.id}?tab=overview&edit=team`} className="text-xs text-accent-deep font-semibold mt-1 inline-block">
-                Reassign
-              </Link>
-            ) : null}
-          </div>
+        <div className="owners">
+          <div className="owner"><span className="k">CS owner</span><Person name={a.cs?.name} role="cs" /></div>
+          <div className="owner"><span className="k">Backend team</span>{a.backend.length ? <TeamList backend={a.backend} /> : <span className="muted small">Not assigned yet{a.lead?.name ? ` · waiting on ${a.lead.name.split(" ")[0]}` : ""}</span>}</div>
+          <div className="owner"><span className="k">Team lead</span><Person name={a.lead?.name} role="lead" /></div>
+          <div className="owner"><span className="k">Sales rep</span><Person name={a.sales?.name} role="sales" /></div>
+          {p.reassign ? (
+            <div className="owner"><span className="k">&nbsp;</span><ReassignButton accountId={a.id} team={team} csId={a.cs_id} leadId={a.lead_id} salesId={a.sales_id} backend={a.backend.map((b) => ({ user_id: b.user_id, specialty: b.specialty }))} autoOpen={sp.edit === "team" && a.backend.length > 0} /></div>
+          ) : null}
         </div>
       </div>
 
-      <div className="flex gap-1 border-b border-line overflow-x-auto">
-        {tabs.map(([k, l]) => (
-          <Link key={k} href={`/accounts/${a.id}?tab=${k}`} className={`px-4 h-10 inline-flex items-center text-sm font-semibold whitespace-nowrap border-b-2 -mb-px ${tab === k ? "border-accent text-fg" : "border-transparent text-fg-2 hover:text-fg"}`}>
+      <div className="tabs">
+        {tabs.map(([k, l, extra]) => (
+          <Link key={k} href={`/accounts/${a.id}?tab=${k}`} className={`${tab === k ? "active" : ""} ${k === "billing" && !p.billing ? "locked" : ""}`}>
             {l}
+            {extra}
           </Link>
         ))}
       </div>
 
-      {tab === "overview" ? <Overview a={a} ownerName={ownerName} editTeam={sp.edit === "team" && p.reassign} /> : null}
-      {tab === "checklist" ? <Checklist accountId={a.id} rows={await getChecklist(a.id)} logins={canLogins ? await getLoginIndex(a.id) : await getLoginIndex(a.id)} canEdit={p.editChecklist} canLogins={canLogins} website={a.website} /> : null}
-      {tab === "reports" ? <Reports a={a} canUpload={p.upload && a.approval === "approved" && (me.role === "admin" || a.backend.some((b) => b.user_id === me.id))} /> : null}
-      {tab === "billing" && p.billing ? <Billing a={a} /> : null}
-      {tab === "notes" ? <Notes a={a} meId={me.id} canAdd={p.addNote} /> : null}
-      {tab === "changes" ? <Changes a={a} canLogins={canLogins} /> : null}
-    </div>
+      {tab === "overview" ? <Overview a={a} /> : null}
+      {tab === "checklist" ? <Checklist accountId={a.id} rows={checks} logins={logins} canEdit={p.editChecklist} canLogins={canLogins} website={a.website} /> : null}
+      {tab === "reports" ? <Reports a={a} reports={reports ?? []} missing={missingReport} canUpload={p.upload && (me.role === "admin" || a.backend.some((b) => b.user_id === me.id))} live={live} /> : null}
+      {tab === "billing" ? (p.billing ? <Billing a={a} meName={me.name} /> : <div className="card"><Empty icon="lock" title="Billing is visible to Customer Success and Admins only" text={`Signed in as ${me.name} (${ROLES[me.role].label}). Ask the CS owner${a.cs?.name ? `, ${a.cs.name},` : ""} if you need billing details.`} /></div>) : null}
+      {tab === "notes" ? <Notes a={a} me={me} canAdd={p.addNote} filter={sp.f ?? "all"} view={sp.view ?? "team"} team={team} /> : null}
+      {tab === "changes" ? <Changes a={a} canLogins={canLogins} area={sp.area ?? "all"} /> : null}
+    </>
   );
 
   // ------------------------------------------------------------ tabs
-  async function Overview({ a, ownerName, editTeam }: { a: NonNullable<Awaited<ReturnType<typeof getAccount>>>; ownerName: (k: string, n: string | null) => string; editTeam: boolean }) {
-    const team = editTeam ? await listTeam() : [];
-    const primary = a.contacts.find((c) => c.is_primary) ?? a.contacts[0];
+  function StatusSelect({ status }: { status: string }) {
     return (
-      <div className="grid lg:grid-cols-2 gap-4 items-start">
-        {editTeam ? (
-          <div className="lg:col-span-2">
-            <TeamEditor accountId={a.id} team={team} csId={a.cs_id} leadId={a.lead_id} salesId={a.sales_id} backend={a.backend.map((b) => ({ user_id: b.user_id, specialty: b.specialty }))} />
+      <select name="status" defaultValue={status} style={{ width: "auto", padding: "4px 28px 4px 10px", fontSize: 12.5, fontWeight: 600, borderRadius: 999 }}>
+        {STATUSES.map((s) => (
+          <option key={s}>{s}</option>
+        ))}
+      </select>
+    );
+  }
+
+  function Overview({ a }: { a: Account }) {
+    const own = (v: string, name: string | null, domain = false) => (v === "us" ? <Pill tone="accent" plain>LeadsGeeks</Pill> : <Pill tone="muted" plain>{ownerLabel(v, name, domain)}</Pill>);
+    return (
+      <div className="grid c2">
+        <div className="stack">
+          <div className="card">
+            <div className="card-h"><h3>Business details</h3></div>
+            <div className="card-b">
+              <dl className="dl">
+                <dt>Phone</dt><dd className="num">{a.phone || <span className="faint">—</span>}</dd>
+                <dt>Email</dt><dd>{a.email || <span className="faint">—</span>}</dd>
+                <dt>Address</dt><dd>{a.street}{a.street ? <br /> : null}{a.city}, {a.state} {a.zip}<span className="sub faint small" style={{ display: "block" }}>United States</span></dd>
+                <dt>Website</dt><dd>{a.website ? <a href={a.website} target="_blank" rel="noopener">{a.website.replace(/^https?:\/\//, "")}</a> : <span className="faint">—</span>}</dd>
+                <dt>Google Business Profile</dt><dd>{a.gbp_url ? <a href={a.gbp_url} target="_blank" rel="noopener">Open listing</a> : <span className="faint">—</span>}</dd>
+                <dt>Industry</dt><dd>{a.industry === "Other (specify)" ? a.industry_other : a.industry}</dd>
+              </dl>
+            </div>
           </div>
-        ) : null}
-        <div className="card">
-          <div className="card-h">
-            <h3>Business</h3>
+          <div className="card">
+            <div className="card-h"><h3>Website</h3></div>
+            <div className="card-b">
+              <dl className="dl">
+                <dt>Built by</dt><dd>{own(a.built_by, a.built_by_name)}</dd>
+                <dt>Hosted by</dt><dd>{own(a.hosted_by, a.hosted_by_name)}</dd>
+                <dt>Domain held by</dt><dd>{own(a.domain_by || "client", a.domain_by_name, true)}</dd>
+                <dt>Platform</dt><dd>{a.platform}</dd>
+              </dl>
+              {a.built_by !== "us" && a.hosted_by !== "us" ? (
+                <div className="banner info" style={{ marginTop: 14 }}>
+                  <Icon n="info" />
+                  <div>Client-owned site. We need CMS and hosting access before making changes. Check the <Link href={`/accounts/${a.id}?tab=checklist`} className="link">access checklist</Link>.</div>
+                </div>
+              ) : null}
+            </div>
           </div>
-          <dl className="card-b grid grid-cols-[120px_1fr] gap-y-2 text-sm">
-            <dt className="text-fg-3">Phone</dt>
-            <dd>{a.phone || "—"}</dd>
-            <dt className="text-fg-3">Email</dt>
-            <dd>{a.email || "—"}</dd>
-            <dt className="text-fg-3">Address</dt>
-            <dd>
-              {a.street ? `${a.street}, ` : ""}
-              {a.city}, {a.state} {a.zip}
-            </dd>
-            <dt className="text-fg-3">Website</dt>
-            <dd className="truncate">{a.website || "—"}</dd>
-            <dt className="text-fg-3">Platform</dt>
-            <dd>{a.platform}</dd>
-            <dt className="text-fg-3">Built by</dt>
-            <dd>{ownerName(a.built_by, a.built_by_name)}</dd>
-            <dt className="text-fg-3">Hosted by</dt>
-            <dd>{ownerName(a.hosted_by, a.hosted_by_name)}</dd>
-            <dt className="text-fg-3">Domain held by</dt>
-            <dd>{ownerName(a.domain_by, a.domain_by_name)}</dd>
-          </dl>
         </div>
-        <div className="flex flex-col gap-4">
+        <div className="stack">
           <div className="card">
             <div className="card-h">
               <h3>Contacts</h3>
+              <div className="spacer" />
+              {p.editAccount ? <Link className="btn sm ghost" href={`/accounts/${a.id}/edit`}><Icon n="plus" /> Add</Link> : null}
             </div>
             {a.contacts.length ? (
-              <ul className="divide-y divide-line">
-                {a.contacts.map((c) => (
-                  <li key={c.id} className="px-5 py-3 flex items-center gap-3">
-                    <Avatar name={c.name} />
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold">
-                        {c.name} {c.is_primary ? <Pill tone="accent">Primary</Pill> : null}
-                      </div>
-                      <div className="text-xs text-fg-3">
-                        {c.title}
-                        {c.phone ? ` · ${c.phone}` : ""}
-                        {c.email ? ` · ${c.email}` : ""}
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <div className="tablewrap">
+                <table className="tbl compact">
+                  <tbody>
+                    {a.contacts.map((c) => (
+                      <tr key={c.id}>
+                        <td><b>{c.name}</b> {c.is_primary ? <Pill tone="accent" plain>Primary</Pill> : null}<span className="sub">{c.title}</span></td>
+                        <td className="num">{c.phone}</td>
+                        <td>{c.email}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             ) : (
-              <Empty title="No contacts yet" text={primary ? "" : "Add the owner or office manager from Edit details."} />
+              <div className="card-b muted small">No contacts yet. Add the owner or office manager from Edit details.</div>
             )}
           </div>
           <div className="card">
-            <div className="card-h">
-              <h3>Services for this client</h3>
-            </div>
-            <div className="card-b flex gap-1.5 flex-wrap">
-              {a.services.map((s) => (
-                <Pill key={s} tone="muted">
-                  {s}
-                </Pill>
-              ))}
-              {a.service_other ? <Pill tone="muted">{a.service_other}</Pill> : null}
-              {!a.services.length ? <span className="text-fg-3 text-sm">None recorded</span> : null}
+            <div className="card-h"><h3>Services</h3><span className="muted small">{a.services.length + (a.service_other ? 1 : 0)} active</span></div>
+            <div className="card-b">{a.services.length || a.service_other ? <Tags items={[...a.services, ...(a.service_other ? [a.service_other] : [])]} /> : <span className="muted small">None recorded</span>}</div>
+          </div>
+          <div className="card">
+            <div className="card-h"><h3>Team</h3></div>
+            <div className="card-b">
+              <dl className="dl narrow">
+                <dt>CS owner</dt><dd><Person name={a.cs?.name} role="cs" size="sm" /></dd>
+                <dt>Backend team</dt><dd>{a.backend.length ? <TeamList backend={a.backend} size="sm" /> : <span className="muted">Not assigned yet</span>}</dd>
+                <dt>Team lead</dt><dd><Person name={a.lead?.name} role="lead" size="sm" /></dd>
+                <dt>Sales rep</dt><dd><Person name={a.sales?.name} role="sales" size="sm" /></dd>
+                <dt>Created</dt><dd className="muted">{fmtDate(a.created_at)}</dd>
+              </dl>
             </div>
           </div>
         </div>
@@ -238,396 +242,376 @@ export default async function AccountPage({ params, searchParams }: { params: Pr
     );
   }
 
-  async function Reports({ a, canUpload }: { a: NonNullable<Awaited<ReturnType<typeof getAccount>>>; canUpload: boolean }) {
-    const { data: reports } = await supabase.from("reports").select("id, month, file_path, file_name, uploaded_at, uploader:profiles(name)").eq("account_id", a.id).order("month", { ascending: false });
-    const lm = lastMonth();
-    const missing = ["Active", "Past due"].includes(a.status) && a.approval === "approved" && !(reports ?? []).some((r) => r.month.startsWith(lm));
+  function Reports({ a, reports, missing, canUpload, live }: { a: Account; reports: { id: string; month: string; file_path: string; file_name: string; uploaded_at: string; uploader: unknown }[]; missing: boolean; canUpload: boolean; live: boolean }) {
+    const seo = a.backend.find((b) => b.specialty === "SEO") ?? a.backend[0];
     return (
-      <div className="flex flex-col gap-4">
+      <>
         {missing ? (
-          <div className="banner warn">
-            {monthLabel(lm)} report has not been uploaded yet.{a.backend.length ? ` Waiting on ${a.backend.map((b) => b.profile?.name?.split(" ")[0]).join(", ")}.` : ""}
-          </div>
-        ) : null}
-        {canUpload ? (
-          <form action={uploadReport.bind(null, a.id)} className="card card-b flex gap-3 items-end flex-wrap">
-            <div className="field">
-              <label>Month covered</label>
-              <input type="month" name="month" defaultValue={lm} max={thisMonth()} required />
-            </div>
-            <div className="field flex-1 min-w-60">
-              <label>PDF</label>
-              <input type="file" name="file" accept="application/pdf" required className="pt-1.5" />
-            </div>
-            <button className="btn primary">Upload report</button>
-          </form>
+          <Banner tone="warn" icon="alert"><b>{monthLabel(lm)} report is overdue.</b> {canUpload ? "Upload it from the button on the right." : `${seo?.profile?.name ?? "The backend owner"} hasn't uploaded it yet.`}</Banner>
+        ) : a.status === "Onboarding" ? (
+          <Banner tone="info" icon="info">First report is due after the first full month of service.</Banner>
         ) : null}
         <div className="card">
           <div className="card-h">
             <h3>Monthly reports</h3>
-            <span className="ml-auto text-xs text-fg-3">{reports?.length ?? 0} uploaded</span>
+            <span className="muted small">{reports.length} on file</span>
+            <div className="spacer" />
+            {canUpload && live ? <UploadReportButton accountId={a.id} csName={a.cs?.name} missingMonth={missing ? lm : null} /> : canUpload ? <span className="muted small">Reports start after admin approval</span> : null}
           </div>
-          {reports?.length ? (
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>Month</th>
-                  <th>Uploaded by</th>
-                  <th>Uploaded</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {reports.map((r) => (
-                  <tr key={r.id}>
-                    <td className="font-semibold">{monthLabel(r.month)}</td>
-                    <td>
-                      <Person name={(r.uploader as unknown as { name: string } | null)?.name} size="sm" />
-                    </td>
-                    <td className="text-fg-2">{fmtDate(r.uploaded_at)}</td>
-                    <td className="text-right">
-                      <ReportLink path={r.file_path} name={r.file_name} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <Empty title="No reports yet" text="The backend team uploads one PDF per month." />
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  async function Billing({ a }: { a: NonNullable<Awaited<ReturnType<typeof getAccount>>> }) {
-    const [{ data: b }, { data: ups }, { data: pays }] = await Promise.all([
-      supabase.from("billing").select("*").eq("account_id", a.id).maybeSingle(),
-      supabase.from("upsells").select("*, seller:profiles(name)").eq("account_id", a.id).order("sold_on", { ascending: false }),
-      supabase.from("payments").select("*").eq("account_id", a.id).order("month", { ascending: false }).limit(12),
-    ]);
-    const tm = thisMonth();
-    const paidThisMonth = (pays ?? []).some((p) => p.month.startsWith(tm));
-    const due = b ? new Date(new Date().getFullYear(), new Date().getMonth(), b.billing_day) : null;
-    const overdue = !!b && !paidThisMonth && !!due && due < new Date() && ["Active", "Past due"].includes(a.status);
-    return (
-      <div className="grid lg:grid-cols-[1fr_1.3fr] gap-4 items-start">
-        <div className="flex flex-col gap-4">
-          <form action={saveBilling.bind(null, a.id)} className="card">
-            <div className="card-h">
-              <h3>Monthly charge</h3>
-              {overdue ? <Pill tone="bad">Overdue</Pill> : paidThisMonth ? <Pill tone="ok">Paid this month</Pill> : null}
-            </div>
-            <div className="card-b grid grid-cols-2 gap-3">
-              <div className="col-span-2 text-3xl font-semibold">{b ? <Money value={Number(b.mrr)} /> : <span className="text-fg-3 text-base">No billing set up</span>}</div>
-              <div className="field">
-                <label>MRC (per month)</label>
-                <input name="mrr" type="number" min={0} step={1} defaultValue={b?.mrr ?? ""} required />
-              </div>
-              <div className="field">
-                <label>Billing day</label>
-                <input name="billing_day" type="number" min={1} max={28} defaultValue={b?.billing_day ?? 1} required />
-              </div>
-              <div className="field">
-                <label>Method</label>
-                <select name="method" defaultValue={b?.method ?? "Card"}>
-                  {BILLING_METHODS.map((m) => (
-                    <option key={m}>{m}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label>Billing since</label>
-                <input name="started_on" type="date" defaultValue={b?.started_on ?? a.client_since} />
-              </div>
-              <div className="col-span-2 flex justify-end">
-                <button className="btn primary sm">Save billing</button>
-              </div>
-            </div>
-          </form>
-          <form action={markPaid.bind(null, a.id)} className="card">
-            <div className="card-h">
-              <h3>Mark collected</h3>
-            </div>
-            <div className="card-b flex gap-3 items-end flex-wrap">
-              <div className="field">
-                <label>Month</label>
-                <input type="month" name="month" defaultValue={tm} required />
-              </div>
-              <div className="field">
-                <label>Amount</label>
-                <input type="number" name="amount" min={0} step={1} defaultValue={b?.mrr ?? 0} required />
-              </div>
-              <div className="field flex-1 min-w-40">
-                <label>Note</label>
-                <input name="note" placeholder="optional" />
-              </div>
-              <button className="btn sm">Mark collected</button>
-            </div>
-            {pays?.length ? (
-              <ul className="divide-y divide-line text-sm">
-                {pays.map((p) => (
-                  <li key={p.id} className="px-5 py-2 flex justify-between">
-                    <span>{monthLabel(p.month)}</span>
-                    <span className="text-fg-2">
-                      <Money value={Number(p.amount)} /> · {fmtDate(p.collected_on)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </form>
-        </div>
-        <div className="card">
-          <div className="card-h">
-            <h3>Upsells</h3>
-          </div>
-          <form action={addUpsell.bind(null, a.id)} className="card-b border-b border-line grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
-            <div className="field col-span-2">
-              <label>What</label>
-              <input name="name" placeholder="e.g. Reputation add-on" required />
-            </div>
-            <div className="field">
-              <label>Amount</label>
-              <input name="amount" type="number" min={0} step={1} required />
-            </div>
-            <div className="field">
-              <label>Type</label>
-              <select name="recurring" defaultValue="0">
-                <option value="0">One-time</option>
-                <option value="1">Monthly</option>
-              </select>
-            </div>
-            <div className="field">
-              <label>Date</label>
-              <input name="sold_on" type="date" defaultValue={new Date().toISOString().slice(0, 10)} />
-            </div>
-            <button className="btn sm col-span-2 md:col-span-1 justify-self-start">Add upsell</button>
-          </form>
-          {ups?.length ? (
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>What</th>
-                  <th>Amount</th>
-                  <th>Type</th>
-                  <th>Date</th>
-                  <th>Sold by</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ups.map((u) => (
-                  <tr key={u.id}>
-                    <td className="font-semibold">{u.name}</td>
-                    <td>
-                      <Money value={Number(u.amount)} />
-                    </td>
-                    <td>{u.recurring ? "Monthly" : "One-time"}</td>
-                    <td className="text-fg-2">{fmtDate(u.sold_on)}</td>
-                    <td className="text-fg-2">{(u.seller as unknown as { name: string } | null)?.name}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <Empty title="No upsells yet" />
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  async function Notes({ a, meId, canAdd }: { a: NonNullable<Awaited<ReturnType<typeof getAccount>>>; meId: string; canAdd: boolean }) {
-    const [{ data: notes }, team] = await Promise.all([supabase.from("notes").select("*, author_p:profiles!notes_author_fkey(name), assignee_p:profiles!notes_assignee_fkey(name)").eq("account_id", a.id).order("created_at", { ascending: false }), listTeam()]);
-    type N = NonNullable<typeof notes>[number] & { author_p: { name: string } | null; assignee_p: { name: string } | null };
-    const all = (notes ?? []) as N[];
-    const openReqs = all.filter((n) => n.kind === "request" && n.status === "open" && !n.is_private).sort((x, y) => (x.due_on ?? "9").localeCompare(y.due_on ?? "9"));
-    const rest = all.filter((n) => !openReqs.includes(n)).sort((x, y) => Number(y.pinned) - Number(x.pinned));
-    const people = team.filter((u) => u.active && (u.id === a.cs_id || u.id === a.lead_id || a.backend.some((b) => b.user_id === u.id) || u.role === "admin"));
-    return (
-      <div className="flex flex-col gap-4">
-        {canAdd ? (
-          <form action={addNote.bind(null, a.id)} className="card card-b flex flex-col gap-3">
-            <div className="flex gap-4 text-sm">
-              <label className="inline-flex items-center gap-1.5">
-                <input type="radio" name="kind" value="note" defaultChecked /> Note
-              </label>
-              <label className="inline-flex items-center gap-1.5">
-                <input type="radio" name="kind" value="request" /> Request
-              </label>
-              <label className="inline-flex items-center gap-1.5 ml-auto text-fg-2">
-                <input type="checkbox" name="is_private" value="1" /> Private (only you can see it)
-              </label>
-            </div>
-            <textarea name="body" required placeholder="Write a note, or describe what you need. Mention people with @Name." className="min-h-20 px-3 py-2 rounded-[var(--radius)] border border-line bg-surface text-sm outline-none focus:border-accent" />
-            <div className="flex gap-3 items-end flex-wrap">
-              <div className="field">
-                <label>Assign to (requests)</label>
-                <select name="assignee" defaultValue="">
-                  <option value="">—</option>
-                  {people.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label>Due</label>
-                <input type="date" name="due_on" />
-              </div>
-              <div className="flex-1" />
-              <button className="btn primary">Post</button>
-            </div>
-          </form>
-        ) : null}
-        {openReqs.length ? (
-          <div className="card">
-            <div className="card-h">
-              <h3>Open requests</h3>
-              <span className="ml-auto text-xs text-fg-3">{openReqs.length}</span>
-            </div>
-            <ul className="divide-y divide-line">
-              {openReqs.map((n) => (
-                <li key={n.id} className="px-5 py-3 flex gap-3 items-start">
-                  <Avatar name={n.author_p?.name ?? "?"} size="sm" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs text-fg-3">
-                      {n.author_p?.name?.split(" ")[0]} → {n.assignee_p?.name?.split(" ")[0] ?? "anyone"} · {fmtDate(n.created_at)}
-                      {n.due_on ? <span className={`ml-2 pill ${new Date(n.due_on) < new Date() ? "bad" : "warn"}`}>Due {fmtDate(n.due_on)}</span> : null}
-                    </div>
-                    <div className="whitespace-pre-wrap">{n.body}</div>
-                  </div>
-                  {canAdd ? (
-                    <form action={setRequestDone.bind(null, a.id, n.id, true)}>
-                      <button className={`btn sm ${n.assignee === meId ? "primary" : ""}`}>Mark done</button>
-                    </form>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-        <div className="card">
-          <div className="card-h">
-            <h3>History</h3>
-          </div>
-          {rest.length ? (
-            <ul className="divide-y divide-line">
-              {rest.map((n) => (
-                <li key={n.id} className={`px-5 py-3 flex gap-3 items-start ${n.pinned ? "bg-accent-soft/40" : ""}`}>
-                  <Avatar name={n.author_p?.name ?? "?"} size="sm" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs text-fg-3 flex gap-2 items-center flex-wrap">
-                      <b className="text-fg">{n.author_p?.name}</b> {fmtDateTime(n.created_at)}
-                      {n.is_private ? <Pill tone="muted">Private</Pill> : null}
-                      {n.kind === "request" ? <Pill tone="ok">Done{n.done_at ? ` ${fmtDate(n.done_at)}` : ""}</Pill> : null}
-                      {n.pinned ? <Pill tone="accent">Pinned</Pill> : null}
-                    </div>
-                    <div className="whitespace-pre-wrap">{n.body}</div>
-                  </div>
-                  {canAdd ? (
-                    <form action={togglePin.bind(null, a.id, n.id, !n.pinned)}>
-                      <button className="btn sm ghost text-fg-3">{n.pinned ? "Unpin" : "Pin"}</button>
-                    </form>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <Empty title="No notes yet" />
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  async function Changes({ a, canLogins }: { a: NonNullable<Awaited<ReturnType<typeof getAccount>>>; canLogins: boolean }) {
-    const [{ data: changes }, { data: reveals }] = await Promise.all([
-      supabase.from("change_log").select("*, by_p:profiles(name)").eq("account_id", a.id).order("at", { ascending: false }).limit(200),
-      canLogins ? supabase.from("login_reveals").select("*, user:profiles(name)").eq("account_id", a.id).order("at", { ascending: false }).limit(50) : Promise.resolve({ data: [] as never[] }),
-    ]);
-    const tone: Record<string, string> = { Details: "info", Contacts: "info", Status: "accent", Access: "ok", Login: "muted", Team: "warn", Approval: "bad", Reports: "muted", Account: "muted" };
-    return (
-      <div className="flex flex-col gap-4">
-        <div className="card">
-          <div className="card-h">
-            <h3>Change log</h3>
-            <span className="ml-auto text-xs text-fg-3">{changes?.length ?? 0} entries · {CHANGE_AREAS.join(", ")}</span>
-          </div>
-          {changes?.length ? (
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>When</th>
-                  <th>By</th>
-                  <th>Area</th>
-                  <th>Change</th>
-                </tr>
-              </thead>
-              <tbody>
-                {changes.map((c) => (
-                  <tr key={c.id}>
-                    <td className="font-mono text-xs whitespace-nowrap">{fmtDateTime(c.at)}</td>
-                    <td>
-                      <Person name={(c.by_p as unknown as { name: string } | null)?.name} size="sm" />
-                    </td>
-                    <td>
-                      <Pill tone={tone[c.area] ?? "muted"}>{c.area}</Pill>
-                    </td>
-                    <td>
-                      <b>{c.text}</b>
-                      {c.from_value || c.to_value ? (
-                        <div className="text-xs text-fg-2">
-                          {c.from_value ? <s className="text-fg-3">{c.from_value}</s> : null}
-                          {c.from_value && c.to_value ? " → " : ""}
-                          {c.to_value}
-                        </div>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <Empty title="No changes yet" />
-          )}
-        </div>
-        {canLogins ? (
-          <div className="card">
-            <div className="card-h">
-              <h3>Logins opened</h3>
-              <span className="ml-auto text-xs text-fg-3">who opened, copied or revealed a stored login</span>
-            </div>
-            {reveals?.length ? (
+          {reports.length ? (
+            <div className="tablewrap">
               <table className="tbl">
-                <thead>
-                  <tr>
-                    <th>When</th>
-                    <th>By</th>
-                    <th>Login</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
+                <thead><tr><th>Month</th><th>File</th><th>Uploaded by</th><th>Date</th><th></th></tr></thead>
                 <tbody>
-                  {reveals.map((r) => (
+                  {reports.map((r) => (
                     <tr key={r.id}>
-                      <td className="font-mono text-xs whitespace-nowrap">{fmtDateTime(r.at)}</td>
-                      <td>
-                        <Person name={(r.user as unknown as { name: string } | null)?.name} size="sm" />
-                      </td>
-                      <td className="font-semibold">{r.item_key}</td>
-                      <td>{r.action}</td>
+                      <td><b>{monthLabel(r.month)}</b></td>
+                      <td><span className="row" style={{ gap: 6 }}><Icon n="file" size={16} style={{ color: "var(--accent-deep)" }} /><span className="mono">{r.file_name}</span></span></td>
+                      <td><Person name={(r.uploader as { name: string } | null)?.name} role="backend" size="sm" /></td>
+                      <td className="nowrap">{fmtDate(r.uploaded_at)}</td>
+                      <td className="r nowrap"><ReportLink path={r.file_path} name={r.file_name} /></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+          ) : (
+            <Empty icon="file" title="No reports yet" text={canUpload ? "Upload the first monthly progress report as a PDF." : "The backend owner uploads a PDF each month. It will appear here."} />
+          )}
+        </div>
+      </>
+    );
+  }
+
+  async function Billing({ a, meName }: { a: Account; meName: string }) {
+    const [{ data: b }, { data: ups }, { data: pays }] = await Promise.all([
+      supabase.from("billing").select("*").eq("account_id", a.id).maybeSingle(),
+      supabase.from("upsells").select("*, seller:profiles(name)").eq("account_id", a.id).order("sold_on", { ascending: false }),
+      supabase.from("payments").select("*, collector:profiles(name)").eq("account_id", a.id).order("month", { ascending: false }).limit(36),
+    ]);
+    const tm = thisMonth();
+    const recurring = (ups ?? []).filter((u) => u.recurring).reduce((s, u) => s + Number(u.amount), 0);
+    const effective = b ? Number(b.mrr) + recurring : 0;
+    const paid = (pays ?? []).find((p) => p.month.startsWith(tm));
+    const billable = live && ["Active", "Past due"].includes(a.status);
+    let st: { state: string; v: string; d: string; alert?: boolean; date?: string } = { state: "na", v: "—", d: a.status === "Onboarding" ? "First charge after onboarding" : `${a.status}, not billed` };
+    if (paid) st = { state: "paid", v: "Paid", d: `Received ${fmtDate(paid.collected_on)}` };
+    else if (b && billable) {
+      const due = new Date(new Date().getFullYear(), new Date().getMonth(), b.billing_day);
+      const days = Math.round((due.getTime() - new Date(new Date().toDateString()).getTime()) / 86400000);
+      st = days >= 0 ? { state: "due", v: days === 0 ? "Due today" : `Due in ${days} day${days === 1 ? "" : "s"}`, d: fmtDate(due), date: due.toISOString().slice(0, 10) } : { state: "overdue", v: `${-days} day${-days === 1 ? "" : "s"} overdue`, d: `Was due ${fmtDate(due)}`, alert: true, date: due.toISOString().slice(0, 10) };
+    }
+    const total = (pays ?? []).reduce((s, p) => s + Number(p.amount), 0);
+    const paidMonths = (pays ?? []).map((p) => p.month.slice(0, 7));
+    return (
+      <>
+        <div className="grid c4">
+          <Stat label="Monthly charge (MRC)" value={b ? <Money value={effective} /> : <span className="muted" style={{ fontSize: 18 }}>Not set up</span>} detail={b ? <><Money value={Number(b.mrr)} /> base{recurring ? <> + <Money value={recurring} /> recurring upsells</> : null}</> : "Set the monthly charge in Billing details"} />
+          <Stat label={monthLabel(tm)} value={st.v} detail={st.d} alert={st.alert} small />
+          <Stat label="Billed on" value={b ? `The ${ord(b.billing_day)}` : "—"} detail={b ? `Every month · ${b.method} · month to month` : "No billing day yet"} small />
+          <Stat label="Client since" value={fmtDate(b?.started_on ?? a.client_since)} detail={<>{pays?.length ?? 0} payment{pays?.length === 1 ? "" : "s"} · <Money value={total} /> collected</>} small />
+        </div>
+        <div className="grid c21">
+          <div className="card">
+            <div className="card-h">
+              <h3>Payments</h3>
+              <span className="muted small">MRC collected, newest first</span>
+              <div className="spacer" />
+              <LogPaymentButton accountId={a.id} amount={effective} method={b?.method ?? "Card"} paidMonths={paidMonths} primary={st.state === "due" || st.state === "overdue"} meName={meName} />
+            </div>
+            {pays?.length || st.state === "due" || st.state === "overdue" ? (
+              <div className="tablewrap">
+                <table className="tbl">
+                  <thead><tr><th>Month</th><th>Amount</th><th>Received</th><th>Logged by</th><th>Note</th></tr></thead>
+                  <tbody>
+                    {st.state === "due" || st.state === "overdue" ? (
+                      <tr style={{ background: st.state === "overdue" ? "var(--bad-soft)" : "var(--info-soft)" }}>
+                        <td><b>{monthLabel(tm)}</b></td>
+                        <td className="num"><Money value={effective} /></td>
+                        <td colSpan={3}><Pill tone={st.state === "overdue" ? "bad" : "info"}>{st.state === "overdue" ? `Overdue · was due ${fmtDate(st.date)}` : `Due ${fmtDate(st.date)}`}</Pill></td>
+                      </tr>
+                    ) : null}
+                    {(pays ?? []).map((pm) => (
+                      <tr key={pm.id}>
+                        <td><b>{monthLabel(pm.month)}</b></td>
+                        <td className="num"><Money value={Number(pm.amount)} /></td>
+                        <td className="nowrap">{fmtDate(pm.collected_on)}</td>
+                        <td><Person name={(pm.collector as { name: string } | null)?.name} role="cs" size="sm" /></td>
+                        <td className="small muted">{pm.note}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             ) : (
-              <Empty title="Nobody has opened a stored login on this account yet." />
+              <Empty icon="dollar" title="No payments logged yet" text="When the client's first monthly charge comes in, log it here." />
             )}
+          </div>
+          <div className="stack">
+            <div className="card">
+              <div className="card-h"><h3>Billing details</h3><div className="spacer" /><EditBillingButton accountId={a.id} billing={b ? { mrr: Number(b.mrr), billing_day: b.billing_day, method: b.method, started_on: b.started_on } : null} clientSince={a.client_since} /></div>
+              <div className="card-b">
+                <dl className="dl narrow">
+                  <dt>Base MRC</dt><dd className="num">{b ? <Money value={Number(b.mrr)} /> : <span className="faint">—</span>}</dd>
+                  <dt>Billing day</dt><dd>{b ? `The ${ord(b.billing_day)} of each month` : <span className="faint">—</span>}</dd>
+                  <dt>Method</dt><dd>{b?.method ?? <span className="faint">—</span>}</dd>
+                  <dt>Terms</dt><dd>Month to month, no contract term</dd>
+                  <dt>Client since</dt><dd>{fmtDate(b?.started_on ?? a.client_since)}</dd>
+                </dl>
+                <div className="banner info" style={{ marginTop: 16 }}>
+                  <Icon n="shield" />
+                  <div className="small">Only Customer Success and Admins can see this tab. Backend, Team Leads and Sales see a locked tab.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-h"><h3>Upsells</h3><span className="muted small">{ups?.length ?? 0} sold</span><div className="spacer" /><AddUpsellButton accountId={a.id} /></div>
+          {ups?.length ? (
+            <div className="tablewrap">
+              <table className="tbl">
+                <thead><tr><th>Upsell</th><th>Type</th><th>Amount</th><th>Date</th><th>Sold by</th></tr></thead>
+                <tbody>
+                  {ups.map((u) => (
+                    <tr key={u.id}>
+                      <td><b>{u.name}</b></td>
+                      <td><Pill tone={u.recurring ? "accent" : "muted"} plain>{u.recurring ? "Recurring" : "One-time"}</Pill></td>
+                      <td className="num"><Money value={Number(u.amount)} suffix={u.recurring ? "/mo" : undefined} /></td>
+                      <td>{fmtDate(u.sold_on)}</td>
+                      <td><Person name={(u.seller as { name: string } | null)?.name} role="cs" size="sm" /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <Empty icon="dollar" title="No upsells yet" text="Log add-ons like extra ad management, a redesign or a second location here." />
+          )}
+        </div>
+      </>
+    );
+  }
+
+  async function Notes({ a, me, canAdd, filter, view, team }: { a: Account; me: { id: string; name: string; role: Role }; canAdd: boolean; filter: string; view: string; team: { id: string; name: string; role: Role; active: boolean }[] }) {
+    const { data: notes } = await supabase.from("notes").select("*, author_p:profiles!notes_author_fkey(name, role), assignee_p:profiles!notes_assignee_fkey(name, role)").eq("account_id", a.id).order("created_at", { ascending: false });
+    type N = NonNullable<typeof notes>[number] & { author_p: { name: string; role: Role } | null; assignee_p: { name: string; role: Role } | null };
+    const all = (notes ?? []) as N[];
+    const mine = all.filter((n) => n.is_private);
+    const shared = all.filter((n) => !n.is_private);
+    const open = shared.filter((n) => n.kind === "request" && n.status === "open").sort((x, y) => (x.due_on ?? "9").localeCompare(y.due_on ?? "9"));
+    const counts = { all: shared.length, open: open.length, mine: shared.filter((n) => n.kind === "request" && (n.assignee === me.id || n.author === me.id)).length, notes: shared.filter((n) => n.kind !== "request").length };
+    const pinnedReqs = filter === "notes" ? [] : filter === "mine" ? open.filter((r) => r.assignee === me.id || r.author === me.id) : open;
+    const pinnedNotes = filter === "open" || filter === "mine" ? [] : shared.filter((n) => n.kind !== "request" && n.pinned);
+    const history = shared.filter((n) => !(n.kind === "request" && n.status === "open") && !(n.kind !== "request" && n.pinned)).filter((n) => filter === "all" || (filter === "notes" && n.kind !== "request") || (filter === "mine" && n.kind === "request" && (n.assignee === me.id || n.author === me.id)));
+    const people = team.filter((u) => u.active && u.id !== me.id && (u.id === a.cs_id || u.id === a.lead_id || u.id === a.sales_id || a.backend.some((b) => b.user_id === u.id) || u.role === "admin" || u.role === "lead"));
+    const roleOf = (id: string) => (id === a.cs_id ? "CS owner" : a.backend.filter((b) => b.user_id === id).map((b) => b.specialty).join("/") || ROLES[team.find((u) => u.id === id)?.role ?? "cs"].label);
+    const href = (q: Record<string, string>) => `/accounts/${a.id}?tab=notes&${new URLSearchParams({ view, f: filter, ...q }).toString()}`;
+
+    const dueInfo = (r: N) => {
+      if (!r.due_on) return null;
+      const d = daysUntil(r.due_on);
+      return { d, cls: d < 0 ? "late" : d <= 3 ? "soon" : "", label: d < 0 ? `${-d} day${-d === 1 ? "" : "s"} overdue` : d === 0 ? "Due today" : `Due ${fmtDate(r.due_on)}` };
+    };
+    const reqCard = (r: N) => {
+      const due = dueInfo(r);
+      if (r.status === "done")
+        return (
+          <div key={r.id} className="req done collapsed">
+            <Icon n="check" />
+            <span className="txt"><b>{r.author_p?.name.split(" ")[0]} → {r.assignee_p?.name.split(" ")[0] ?? "anyone"}</b> · {r.body}</span>
+            <span className="faint small nowrap">done {fmtDate(r.done_at)}</span>
+            {canAdd ? <form action={setRequestDone.bind(null, a.id, r.id, false)}><button className="btn sm ghost" title="Reopen">Reopen</button></form> : null}
+          </div>
+        );
+      return (
+        <div key={r.id} className={`req ${due && due.d < 0 ? "overdue" : "open"}`}>
+          <div className="top">
+            <span className="who"><Avatar name={r.author_p?.name ?? "?"} role={r.author_p?.role} size="sm" /><b>{r.author_p?.name.split(" ")[0]}</b></span>
+            <span className="arrow"><Icon n="chevron" /></span>
+            <span className="who"><Avatar name={r.assignee_p?.name ?? "?"} role={r.assignee_p?.role} size="sm" /><b>{r.assignee_p?.name.split(" ")[0] ?? "anyone"}</b></span>
+            <span className="faint small">{fmtDate(r.created_at)}</span>
+            {due ? <span className={`due ${due.cls}`}>{due.label}</span> : null}
+          </div>
+          <div className="txt">{r.body}</div>
+          <div className="foot">
+            {canAdd ? <form action={setRequestDone.bind(null, a.id, r.id, true)}><button className={`btn sm ${r.assignee === me.id ? "primary" : ""}`}><Icon n="check" /> Mark done</button></form> : null}
+            <span className="faint small">{r.assignee === me.id ? "Assigned to you" : `Waiting on ${r.assignee_p?.name.split(" ")[0] ?? "anyone"}`}</span>
+          </div>
+        </div>
+      );
+    };
+    const row = (n: N) => (
+      <div key={n.id} className="tl-item">
+        <Avatar name={n.author_p?.name ?? "?"} role={n.author_p?.role} size="sm" />
+        <div>
+          <div className="head">
+            <b>{n.author_p?.name}</b>
+            <span className="faint small">{n.author_p ? ROLES[n.author_p.role as Role].label : ""}</span>
+            <time>{fmtDate(n.created_at)}</time>
+            {n.kind === "request" ? <span className="faint small">· request</span> : canAdd ? <form action={togglePin.bind(null, a.id, n.id, !n.pinned)}><button className={`link small pinlink ${n.pinned ? "on" : ""}`} title={n.pinned ? "Unpin" : "Pin to the top"}><Icon n="pin" /> {n.pinned ? "Unpin" : "Pin"}</button></form> : null}
+          </div>
+          {n.kind === "request" ? reqCard(n) : <p style={{ whiteSpace: "pre-wrap" }}>{n.body}</p>}
+        </div>
+      </div>
+    );
+    const viewSwitch = (
+      <div className="noteview">
+        <div className="seg">
+          <Link href={href({ view: "team" })} className={`btn ghost ${view !== "private" ? "on" : ""}`} style={{ border: 0, borderRadius: 0, padding: "7px 12px", background: view !== "private" ? "var(--ink)" : "var(--surface)", color: view !== "private" ? "#fff" : "inherit" }}><Icon n="users" /> Team</Link>
+          <Link href={href({ view: "private" })} className="btn ghost" style={{ border: 0, borderLeft: "1px solid var(--line-strong)", borderRadius: 0, padding: "7px 12px", background: view === "private" ? "var(--ink)" : "var(--surface)", color: view === "private" ? "#fff" : "inherit" }}><Icon n="lock" /> Private</Link>
+        </div>
+        <span className="muted small">{view === "private" ? "Your own notes on this account. Nobody else can see them, not even admins." : "Shared with everyone on this account."}</span>
+      </div>
+    );
+
+    if (view === "private") {
+      return (
+        <div className="card">
+          {viewSwitch}
+          {canAdd ? (
+            <form action={addNote.bind(null, a.id)} className="composer2">
+              <Avatar name={me.name} role={me.role} />
+              <div className="body">
+                <input type="hidden" name="kind" value="note" />
+                <input type="hidden" name="is_private" value="1" />
+                <div className="textwrap"><textarea name="body" required placeholder="A note just for you: reminders, impressions, things to bring up next call…" /></div>
+                <div className="row"><button className="btn primary sm"><Icon n="lock" /> Save private note</button><span className="faint small">Only you can see this.</span></div>
+              </div>
+            </form>
+          ) : null}
+          <div className="card-b" style={{ paddingTop: 4, paddingBottom: 4 }}>
+            <div className="timeline">{mine.length ? mine.sort((x, y) => Number(y.pinned) - Number(x.pinned)).map((n) => (
+              <div key={n.id} className={`tl-item ${n.pinned ? "is-pinned" : ""}`}>
+                <Avatar name={me.name} role={me.role} size="sm" />
+                <div>
+                  <div className="head"><b>You</b><time>{fmtDate(n.created_at)}</time>{n.pinned ? <Pill tone="accent" plain>Pinned</Pill> : null}<form action={togglePin.bind(null, a.id, n.id, !n.pinned)}><button className={`link small pinlink ${n.pinned ? "on" : ""}`}><Icon n="pin" /> {n.pinned ? "Unpin" : "Pin"}</button></form></div>
+                  <p style={{ whiteSpace: "pre-wrap" }}>{n.body}</p>
+                </div>
+              </div>
+            )) : <p className="muted" style={{ padding: "12px 0" }}>No private notes yet.</p>}</div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="card">
+        {viewSwitch}
+        {canAdd ? (
+          <form action={addNote.bind(null, a.id)} className="composer2">
+            <Avatar name={me.name} role={me.role} />
+            <div className="body">
+              <div className="modeseg" role="radiogroup">
+                <label style={{ cursor: "pointer" }}><input type="radio" name="kind" value="note" defaultChecked hidden /><Icon n="message" /> Note</label>
+                <label style={{ cursor: "pointer" }}><input type="radio" name="kind" value="request" hidden /><Icon n="check" /> Request</label>
+              </div>
+              <div className="reqfields">
+                <div className="field">
+                  <label htmlFor="c-to">Assign to (for requests)</label>
+                  <select id="c-to" name="assignee" defaultValue="">
+                    <option value="">—</option>
+                    {people.map((u) => (
+                      <option key={u.id} value={u.id}>{u.name} · {roleOf(u.id)}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="c-due">Due (optional)</label>
+                  <input type="date" id="c-due" name="due_on" />
+                </div>
+              </div>
+              <div className="textwrap"><textarea id="c-text" name="body" required placeholder="Add a note for the team, or describe what you need and pick who should do it." /></div>
+              <div className="row"><button className="btn primary sm">Post</button><span className="faint small">Visible to everyone on this account. Pick a request type and a person to assign it.</span></div>
+            </div>
+          </form>
+        ) : null}
+        <div className="filt">
+          {([["all", "All"], ["open", "Open requests"], ["mine", "My requests"], ["notes", "Notes"]] as const).map(([k, l]) => (
+            <Link key={k} href={href({ f: k })} className={`fbtn ${filter === k ? "on" : ""}`} style={{ textDecoration: "none" }}>{l}<span className="cnt">{counts[k]}</span></Link>
+          ))}
+        </div>
+        {pinnedNotes.length ? (
+          <div className="pinned pinned-notes"><h4><Icon n="pin" /> Pinned<Pill tone="accent" plain>{pinnedNotes.length}</Pill></h4><div className="timeline">{pinnedNotes.map(row)}</div></div>
+        ) : null}
+        {pinnedReqs.length ? (
+          <div className="pinned"><h4>Open requests<Pill tone="warn" plain>{pinnedReqs.length}</Pill><span className="faint small" style={{ fontWeight: 400 }}>· sorted by due date</span></h4>{pinnedReqs.map(reqCard)}</div>
+        ) : filter === "open" ? (
+          <div className="empty" style={{ padding: 28 }}><Icon n="check" /><h4>No open requests</h4><p>Nothing is waiting on anyone for this account.</p></div>
+        ) : null}
+        {filter !== "open" ? (
+          <div className="card-b" style={{ paddingTop: 4, paddingBottom: 4 }}>
+            <div className="acc-group">{filter === "notes" ? "Notes" : "History"}</div>
+            <div className="timeline">{history.length ? history.map(row) : <p className="muted" style={{ padding: "12px 0" }}>Nothing here yet.</p>}</div>
           </div>
         ) : null}
       </div>
+    );
+  }
+
+  async function Changes({ a, canLogins, area }: { a: Account; canLogins: boolean; area: string }) {
+    const [{ data: changes }, { data: reveals }] = await Promise.all([
+      supabase.from("change_log").select("*, by_p:profiles(name, role)").eq("account_id", a.id).order("at", { ascending: false }).limit(300),
+      canLogins ? supabase.from("login_reveals").select("*, user:profiles(name, role)").eq("account_id", a.id).order("at", { ascending: false }).limit(50) : Promise.resolve({ data: [] as never[] }),
+    ]);
+    const tone: Record<string, string> = { Details: "info", Contacts: "info", Status: "accent", Access: "ok", Login: "dark", Team: "warn", Approval: "bad", Reports: "muted", Account: "muted" };
+    const all = changes ?? [];
+    const list = all.filter((c) => area === "all" || c.area === area);
+    type P = { name: string; role: Role } | null;
+    return (
+      <>
+        <div className="card">
+          <div className="card-h"><h3>Change log</h3><span className="muted small">{all.length} entries · visible to everyone on this account</span></div>
+          <div className="filt">
+            {[["all", "All"], ...CHANGE_AREAS.map((x) => [x, x])].map(([k, l]) => (
+              <Link key={k} href={`/accounts/${a.id}?tab=changes&area=${k}`} className={`fbtn ${area === k ? "on" : ""}`} style={{ textDecoration: "none" }}>{l}<span className="cnt">{k === "all" ? all.length : all.filter((c) => c.area === k).length}</span></Link>
+            ))}
+          </div>
+          {list.length ? (
+            <div className="tablewrap">
+              <table className="tbl compact changelog">
+                <thead><tr><th>When</th><th>By</th><th>Area</th><th>Change</th></tr></thead>
+                <tbody>
+                  {list.map((c) => (
+                    <tr key={c.id}>
+                      <td className="nowrap mono">{fmtDateTime(c.at)}</td>
+                      <td><Person name={(c.by_p as P)?.name} role={(c.by_p as P)?.role} size="sm" /></td>
+                      <td><Pill tone={tone[c.area] ?? "muted"} plain>{c.area}</Pill></td>
+                      <td><b>{c.text}</b>{c.from_value || c.to_value ? <span className="sub">{c.from_value ? <><s className="muted">{c.from_value}</s> → </> : null}<span>{c.to_value}</span></span> : null}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <Empty icon="file" title="No changes yet" text="Edits to details, contacts, status and access will show up here." />
+          )}
+        </div>
+        {canLogins ? (
+          <div className="card">
+            <div className="card-h"><h3>Logins opened</h3><span className="muted small">{reveals?.length ?? 0} entries · who opened, copied or revealed a stored login</span></div>
+            {reveals?.length ? (
+              <div className="tablewrap">
+                <table className="tbl compact changelog">
+                  <thead><tr><th>When</th><th>By</th><th>Login</th><th>Action</th></tr></thead>
+                  <tbody>
+                    {reveals.map((r) => (
+                      <tr key={r.id}>
+                        <td className="nowrap mono">{fmtDateTime(r.at)}</td>
+                        <td><Person name={(r.user as P)?.name} role={(r.user as P)?.role} size="sm" /></td>
+                        <td><b>{r.item_key}</b></td>
+                        <td>{r.action}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="card-b muted small">Nobody has opened a stored login on this account yet.</div>
+            )}
+          </div>
+        ) : null}
+      </>
     );
   }
 }
