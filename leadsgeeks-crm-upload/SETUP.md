@@ -26,24 +26,11 @@ select encode(gen_random_bytes(32), 'base64');
 
 Copy the output somewhere safe (password manager). This is `LOGIN_ENCRYPTION_KEY`. If it is lost, every stored client password becomes unreadable.
 
-## 4. Vercel (hosting)
+## 4. Vercel (hosting) — done
 
-1. https://vercel.com → Sign up with GitHub → Add New Project → import `leadsgeeks-crm`.
-2. On the import screen, under **Root Directory**, click Edit and choose `leadsgeeks-crm-upload`. Vercel should then detect Next.js automatically. This step is required; without it the deploy fails because the app is not at the top of the repository.
-3. Before clicking Deploy, open Environment Variables and add:
+Live at https://leadsgeeks-crm.vercel.app on the LeadsGeeks Vercel account (Hobby plan for the trial; upgrade to Pro before full team use). The project builds from the `leadsgeeks-crm-upload` folder of the GitHub repository and redeploys automatically on every push to `main`.
 
-| Name | Value |
-|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase Project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service_role key |
-| `LOGIN_ENCRYPTION_KEY` | output of step 3 |
-| `NEXT_PUBLIC_APP_URL` | `https://leadsgeeks-crm.vercel.app` for now; your custom domain later |
-| `SLACK_WEBHOOK_URL` | leave empty until step 6 |
-
-4. Deploy. Copy the URL Vercel gives you.
-5. Back in Supabase → Authentication → URL Configuration: Site URL = that Vercel URL; Redirect URLs: add `https://<vercel-url>/auth/callback`.
-6. Open the Vercel URL, sign in with the email and password from step 2.2. You are the admin. Invite the team from the Team page.
+Environment variables are set in Vercel → Project → Settings → Environment Variables. The Supabase integration manages the Supabase URL and keys; `LOGIN_ENCRYPTION_KEY` and `NEXT_PUBLIC_APP_URL` were added by hand. Supabase → Authentication → URL Configuration points at the Vercel address.
 
 ## 5. Custom domain (optional, later)
 
